@@ -328,6 +328,31 @@ export interface BulkIncidentResult {
   results: { id: string; ok: boolean; error?: string }[]
 }
 
+export interface ActivityPayload {
+  events: {
+    ts: string
+    event: string
+    detail: string
+    incidentId: string
+    serviceKey: string
+    incidentTitle: string
+  }[]
+  total: number
+  services: string[]
+}
+
+/** Unified audit feed flattened from every incident's timeline. */
+export function useActivity(service: string, event: string) {
+  return useQuery({
+    queryKey: ['activity', service, event],
+    queryFn: () =>
+      getJson<ActivityPayload>(
+        `/api/activity?limit=150&service=${encodeURIComponent(service)}&event=${encodeURIComponent(event)}`,
+      ),
+    refetchInterval: SLOW,
+  })
+}
+
 /** Bulk lifecycle transition and/or assignment over up to 50 incidents. */
 export function useBulkIncidentAction() {
   const qc = useQueryClient()

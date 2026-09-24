@@ -1,9 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import { useAlerts, useIncidentAction, useCreateRule, useTestRule, useBulkIncidentAction, useAssignIncident, useSettings, type OpenIncident } from '@/hooks/use-console-data'
+import { useAlerts, useIncidentAction, useCreateRule, useTestRule, useBulkIncidentAction, useAssignIncident, useSettings, useActivity, type OpenIncident } from '@/hooks/use-console-data'
 import { StatusPill, EmptyState, TONE_COLOR, statusTone, SectionHeader } from '@/components/console/primitives'
 import { timeAgo } from '@/lib/format'
+import { useIncidentFilterPresets, type IncidentFilterPreset } from '@/lib/incident-filter-store'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -13,12 +14,43 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from 'sonner'
-import { BellRing, FlaskConical, Plus, ShieldCheck, Siren, Timer, UserPlus } from 'lucide-react'
+import { BellRing, FlaskConical, Plus, ShieldCheck, Siren, Timer, UserPlus, Filter, Pin, PinOff, History } from 'lucide-react'
 
 interface TimelineEntry {
   ts: string
   event: string
   detail: string
+}
+
+interface IncidentFilters {
+  status: string
+  severity: string
+  service: string
+  assignee: string
+}
+
+const NO_FILTERS: IncidentFilters = { status: '', severity: '', service: '', assignee: '' }
+
+function filtersActive(f: IncidentFilters): boolean {
+  return Boolean(f.status || f.severity || f.service || f.assignee)
+}
+
+function filterLabel(f: IncidentFilters): string {
+  const parts: string[] = []
+  if (f.status) parts.push(`status:${f.status}`)
+  if (f.severity) parts.push(`sev:${f.severity}`)
+  if (f.service) parts.push(f.service)
+  if (f.assignee === '__none') parts.push('unassigned')
+  else if (f.assignee) parts.push(`@${f.assignee.split(' ')[0].toLowerCase()}`)
+  return parts.join(' · ') || 'empty'
+}
+
+const EVENT_TONE: Record<string, 'ok' | 'warn' | 'crit' | 'neutral'> = {
+  triggered: 'crit',
+  acknowledged: 'warn',
+  mitigated: 'neutral',
+  resolved: 'ok',
+  assignment: 'neutral',
 }
 
 export function AlertsView() {
@@ -31,6 +63,10 @@ export function AlertsView() {
   const [selected, setSelected] = useState<OpenIncident | null>(null)
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [assignPick, setAssignPick] = useState('')
+  const [filters, setFilters] = useState<IncidentFilters>(NO_FILTERS)
+  const [presets, savePreset, removePreset] = useIncidentFilterPresets()
+  const [activityEvent, setActivityEvent] = useState('')
+  const activity = useActivity('', activityEvent)
 
   if (isLoading && !data) {
     return (
@@ -43,8 +79,14 @@ export function AlertsView() {
   }
   if (!data) return <EmptyState title="Alert register unavailable" />
 
-  const open = data.incidents.filter((i) => i.status !== 'resolved')
-  const resolved = data.incidents.filter((i) => i.status === 'resolved')
+  const matches = (i: OpenIncident) =>
+    (!filters.status || i.status === filters.status) &&
+    (!filters.severity || i.severity === filters.severity) &&
+    (!filters.service || i.serviceKey === filters.service) &&
+    (!filters.assignee || (filters.assignee === '__none' ? !i.assignee : i.assignee === filters.assignee))
+
+  const open = data.incidents.filter((i) => i.status !== 'resolved' && matches(i))
+  const resolved = data.incidents.filter((i) => i.status === 'resolved' && matches(i))
 
   const act = (id: string, action: 'acknowledge' | 'mitigate' | 'resolve') => {
     incidentAction.mutate(
@@ -104,8 +146,12 @@ export function AlertsView() {
   }
 
   const team = settings?.team ?? []
-  const openIds = data.incidents.filter((i) => i.status !== 'resolved').map((i) => i.id)
+
+  const openIds = data.incidents.filter((i) => i.status !== 'resolved' && matches(i)).map((i) => i.id)
   const allChecked = openIds.length > 0 && openIds.every((id) => checked.has(id))
+
+  const assigneeKeys = [...new Set(data.incidents.map((i) => i.assignee).filter((a): a is string => Boolean(a)))].sort()
+  const serviceKeys = [...new Set(data.incidents.map((i) => i.serviceKey))].sort()
 
   const toggleRow = (id: string) => {
     setChecked((prev) => {
@@ -172,6 +218,11 @@ export function AlertsView() {
           <h1 className="text-lg font-semibold tracking-tight">Alerts & incidents</h1>
           <p className="text-xs text-muted-foreground">
             {data.counts.open} open · {data.counts.rulesEnabled}/{data.counts.rules} rules armed
+            {filtersActive(filters) && (
+              <>
+                {' '}· <span className="text-foreground/80">{open.length} match filter</span>
+              </>
+            )}
           </p>
         </div>
         <NewRuleDialog />
@@ -189,9 +240,121 @@ export function AlertsView() {
         <TabsList className="h-8">
           <TabsTrigger value="incidents" className="text-xs">Incidents</TabsTrigger>
           <TabsTrigger value="rules" className="text-xs">Rules</TabsTrigger>
+          <TabsTrigger value="activity" className="gap-1 text-xs">
+            <History className="h-3 w-3" /> Activity
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="incidents" className="mt-3 space-y-2">
+          {/* Saved-filter chip row */}
+          {(presets.length > 0 || filtersActive(filters)) && (
+            <div className="flex flex-wrap items-center gap-1.5 px-1">
+              {presets.map((p) => {
+                const active = filterLabel(filters) === filterLabel({ status: p.status, severity: p.severity, service: p.service, assignee: p.assignee })
+                return (
+                  <span
+                    key={p.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setFilters({ status: p.status, severity: p.severity, service: p.service, assignee: p.assignee })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        setFilters({ status: p.status, severity: p.severity, service: p.service, assignee: p.assignee })
+                      }
+                    }}
+                    className={cn(
+                      'group inline-flex cursor-pointer items-center gap-1 rounded-full border px-2.5 py-0.5 text-[10px] transition-colors',
+                      active
+                        ? 'border-primary/50 bg-primary/15 text-foreground'
+                        : 'bg-muted/40 text-muted-foreground hover:border-ring/50 hover:text-foreground',
+                    )}
+                  >
+                    <Filter className="h-2.5 w-2.5" />
+                    {p.label}
+                    <button
+                      aria-label={`Remove preset ${p.label}`}
+                      className="ml-0.5 opacity-0 transition-opacity group-hover:opacity-100"
+                      onClick={(e) => { e.stopPropagation(); removePreset(p.id) }}
+                    >
+                      <PinOff className="h-2.5 w-2.5" />
+                    </button>
+                  </span>
+                )
+              })}
+              {filtersActive(filters) && (
+                <button
+                  className="text-[10px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                  onClick={() => setFilters(NO_FILTERS)}
+                >
+                  clear
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Filter bar */}
+          <div className="card-surface flex flex-wrap items-center gap-2 px-3 py-2">
+            <Filter className="h-3 w-3 shrink-0 text-muted-foreground" />
+            <Select value={filters.status} onValueChange={(v) => setFilters({ ...filters, status: v === '__all' ? '' : v })}>
+              <SelectTrigger className="h-7 w-[7.5rem] text-[11px]"><SelectValue placeholder="Status" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all" className="text-xs">any status</SelectItem>
+                {['triggered', 'acknowledged', 'mitigated', 'resolved'].map((s) => (
+                  <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={filters.severity} onValueChange={(v) => setFilters({ ...filters, severity: v === '__all' ? '' : v })}>
+              <SelectTrigger className="h-7 w-[7.5rem] text-[11px]"><SelectValue placeholder="Severity" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all" className="text-xs">any severity</SelectItem>
+                {['critical', 'warning', 'info'].map((s) => (
+                  <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={filters.service} onValueChange={(v) => setFilters({ ...filters, service: v === '__all' ? '' : v })}>
+              <SelectTrigger className="h-7 w-40 font-mono text-[11px]"><SelectValue placeholder="Service" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all" className="text-xs">any service</SelectItem>
+                {serviceKeys.map((s) => (
+                  <SelectItem key={s} value={s} className="font-mono text-xs">{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={filters.assignee} onValueChange={(v) => setFilters({ ...filters, assignee: v === '__all' ? '' : v })}>
+              <SelectTrigger className="h-7 w-40 text-[11px]"><SelectValue placeholder="Assignee" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all" className="text-xs">any assignee</SelectItem>
+                {assigneeKeys.map((a) => (
+                  <SelectItem key={a} value={a} className="text-xs">{a}</SelectItem>
+                ))}
+                <SelectItem value="__none" className="text-xs text-muted-foreground">unassigned</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="ml-auto h-7 gap-1 px-2 text-[11px] text-muted-foreground"
+              disabled={!filtersActive(filters)}
+              onClick={() => {
+                const preset: IncidentFilterPreset = {
+                  id: `f${Date.now().toString(36)}`,
+                  label: filterLabel(filters),
+                  status: filters.status,
+                  severity: filters.severity,
+                  service: filters.service,
+                  assignee: filters.assignee,
+                }
+                savePreset(preset)
+                toast.success('Filter pinned', { description: `“${preset.label}” is now one click away.` })
+              }}
+            >
+              <Pin className="h-3 w-3" /> Pin filter
+            </Button>
+          </div>
+
           {/* Selection + bulk action bar */}
           <div className="flex flex-wrap items-center gap-2 px-1">
             <Checkbox
@@ -404,6 +567,75 @@ export function AlertsView() {
             </table>
             <div className="border-t bg-muted/20 px-4 py-2 text-[10px] text-muted-foreground">
               Test evaluates the rule against live gateway telemetry (read-only). If it would fire, you can register a DRILL incident from the toast to rehearse ack/mitigate/resolve.
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="activity" className="mt-3">
+          <div className="card-surface">
+            <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2.5">
+              <History className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-[12px] font-medium">Audit trail</span>
+              <span className="text-[10px] text-muted-foreground">
+                every lifecycle + assignment event across the register
+              </span>
+              <Select value={activityEvent} onValueChange={(v) => setActivityEvent(v === '__all' ? '' : v)}>
+                <SelectTrigger className="ml-auto h-7 w-40 text-[11px]"><SelectValue placeholder="All events" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all" className="text-xs">all events</SelectItem>
+                  {['triggered', 'acknowledged', 'mitigated', 'resolved', 'assignment'].map((e) => (
+                    <SelectItem key={e} value={e} className="text-xs capitalize">{e}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="scroll-thin max-h-[560px] overflow-y-auto">
+              {activity.isLoading && !activity.data ? (
+                <div className="space-y-2 p-4">
+                  {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-9" />)}
+                </div>
+              ) : activity.data && activity.data.events.length > 0 ? (
+                <ol className="relative px-5 py-4">
+                  {activity.data.events.map((e, idx) => {
+                    const tone = EVENT_TONE[e.event] ?? 'neutral'
+                    return (
+                      <li
+                        key={`${e.incidentId}-${e.ts}-${idx}`}
+                        className="relative flex items-start gap-3 pb-3.5 last:pb-0"
+                      >
+                        {idx < activity.data!.events.length - 1 && (
+                          <span className="absolute left-[7px] top-5 h-full w-px bg-border" aria-hidden />
+                        )}
+                        <span
+                          className="mt-1 h-[15px] w-[15px] shrink-0 rounded-full border-2 border-background"
+                          style={{ background: TONE_COLOR[tone] }}
+                          aria-hidden
+                        />
+                        <div className="min-w-0 flex-1 rounded-lg border bg-card/40 px-3 py-2">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                            <span className="text-[11px] font-semibold capitalize" style={{ color: TONE_COLOR[tone] }}>
+                              {e.event}
+                            </span>
+                            <span className="font-mono text-[10px] text-muted-foreground">{e.serviceKey}</span>
+                            <span className="text-[10px] text-muted-foreground">{e.incidentTitle}</span>
+                            <span className="ml-auto shrink-0 text-[10px] tabular text-muted-foreground">
+                              {timeAgo(e.ts)}
+                            </span>
+                          </div>
+                          <div className="mt-0.5 text-[11px] text-muted-foreground">{e.detail}</div>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ol>
+              ) : (
+                <EmptyState title="No activity yet" hint="acknowledge, mitigate or assign an incident to start the trail" />
+              )}
+              {activity.data && (
+                <div className="border-t px-4 py-2 text-[10px] text-muted-foreground">
+                  showing {activity.data.events.length} of {activity.data.total} events · newest first · refreshes every 15s
+                </div>
+              )}
             </div>
           </div>
         </TabsContent>
