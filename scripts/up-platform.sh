@@ -2,7 +2,11 @@
 # up-platform.sh - idempotent starter for every Lodestar background plane.
 #
 # Usage:  bash scripts/up-platform.sh [plane ...]
-# Planes: gateway agent aiops billing reporting   (default: all)
+# Planes: gateway agent aiops billing reporting web   (default: all but web)
+#
+# The web plane is opt-in (`up-platform.sh web` or `up-platform.sh all web`)
+# because the sandbox normally runs the Next.js dev server itself; use it to
+# restore the console after an OOM kill or sandbox restart.
 #
 # Each plane is only started when its health endpoint does not answer, so the
 # script is safe to re-run from cron sessions or after a sandbox restart.
@@ -13,6 +17,15 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOGS="$ROOT/logs"
 mkdir -p "$LOGS"
 PLANES=(${@:-gateway agent aiops billing reporting})
+# `all` expands to the code-tier set; track whether the caller asked for web
+# so the status footer only checks :3000 when it was actually requested.
+for i in "${!PLANES[@]}"; do
+  if [ "${PLANES[$i]}" = "all" ]; then
+    PLANES[$i]="gateway"; PLANES+=("agent" "aiops" "billing" "reporting")
+  fi
+  [ "${PLANES[$i]}" = "web" ] && WEB_REQUESTED=1
+done
+WEB_REQUESTED="${WEB_REQUESTED:-0}"
 
 # --- toolchains (user-space installs, see docs/operations.md) ---------------
 export PATH="$HOME/toolchains/go/bin:$HOME/toolchains/jdk/bin:$HOME/.dotnet:$PATH"
@@ -74,8 +87,12 @@ for p in "${PLANES[@]}"; do
       start reporting 4200 /v1/health "$ROOT/services/reporting" \
         env ASPNETCORE_URLS=http://127.0.0.1:4200 ASPNETCORE_ENVIRONMENT=Production "$DOTNET" "$DLL"
       ;;
+    web)
+      start web 3000 /api/health "$ROOT" \
+        env PORT=3000 bun run dev
+      ;;
     *)
-      echo "[unknown] plane '$p' (known: gateway agent aiops billing reporting)"
+      echo "[unknown] plane '$p' (known: gateway agent aiops billing reporting web)"
       ;;
   esac
 done
@@ -87,3 +104,6 @@ pgrep -f pulseagent >/dev/null 2>&1 && echo "  agent     running" || echo "  age
 port_up 3200 /v1/health && echo "  aiops     :3200 up" || echo "  aiops     :3200 DOWN"
 port_up 4100 /v1/health && echo "  billing   :4100 up" || echo "  billing   :4100 DOWN"
 port_up 4200 /v1/health && echo "  reporting :4200 up" || echo "  reporting :4200 DOWN"
+if [ "$WEB_REQUESTED" = "1" ]; then
+  port_up 3000 /api/health && echo "  web       :3000 up" || echo "  web       :3000 DOWN"
+fi
