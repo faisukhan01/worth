@@ -46,7 +46,7 @@ RUN bun run build
 # ---------------------------------------------------------------------------
 # Stage 3: runner
 # ---------------------------------------------------------------------------
-FROM node:20-alpine AS runner
+FROM node:25-alpine AS runner
 WORKDIR /app
 
 LABEL org.opencontainers.image.source="https://github.com/lodestar-oss/lodestar"
