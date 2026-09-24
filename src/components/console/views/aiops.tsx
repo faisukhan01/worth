@@ -1,14 +1,15 @@
 'use client'
 
 import { useState } from 'react'
-import { useAiops, useAlerts, usePromoteIncident } from '@/hooks/use-console-data'
+import { useAiops, useAlerts, usePromoteIncident, useIncidentAction } from '@/hooks/use-console-data'
 import { StatusPill, EmptyState, TONE_COLOR, SectionHeader, statusTone } from '@/components/console/primitives'
 import { AreaChart, ConfidenceBar } from '@/components/console/charts'
 import { fmtNum, timeAgo, fmtClock } from '@/lib/format'
 import { Skeleton } from '@/components/ui/skeleton'
 import { toast } from 'sonner'
-import { BrainCircuit, LineChart as LineChartIcon, Stethoscope, Zap } from 'lucide-react'
+import { BrainCircuit, Check, LineChart as LineChartIcon, Stethoscope, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import type { OpenIncident } from '@/hooks/use-console-data'
 
 const FORECAST_COLOR = 'var(--chart-4)'
 
@@ -16,16 +17,18 @@ export function AiopsView() {
   const { data, isLoading } = useAiops()
   const { data: alertsData } = useAlerts() // open incidents seed the promoted state
   const promote = usePromoteIncident()
+  const action = useIncidentAction()
   const [forecastIdx, setForecastIdx] = useState(0)
   const [promoted, setPromoted] = useState<Set<string>>(new Set())
 
   // Stable key per (service, metric) — survives anomaly-id rotation between polls.
   const keyOf = (service: string, metric: string) => `${service}:${metric}`
-  const openDedupKeys = new Set(
-    (alertsData?.incidents ?? [])
-      .filter((i) => i.status !== 'resolved' && i.dedupKey)
-      .map((i) => i.dedupKey as string),
-  )
+  const openByDedupKey = new Map<string, OpenIncident>()
+  for (const i of alertsData?.incidents ?? []) {
+    if (i.status !== 'resolved' && i.dedupKey && !openByDedupKey.has(i.dedupKey)) {
+      openByDedupKey.set(i.dedupKey, i)
+    }
+  }
 
   if (isLoading && !data) {
     return (
@@ -116,38 +119,83 @@ export function AiopsView() {
                       <div className="text-muted-foreground">deviation</div>
                     </div>
                   </div>
-                  <button
-                    className="mt-2 w-full rounded-md border border-dashed py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-ring hover:text-foreground disabled:opacity-50"
-                    disabled={promote.isPending || promoted.has(keyOf(a.service, a.metric)) || openDedupKeys.has(keyOf(a.service, a.metric))}
-                    onClick={() => {
-                      promote.mutate(
-                        {
-                          service: a.service,
-                          metric: a.metric,
-                          severity: a.severity,
-                          message: a.message,
-                          baseline: a.baseline,
-                          observed: a.observed,
-                        },
-                        {
-                          onSuccess: (r) => {
-                            setPromoted((prev) => new Set(prev).add(keyOf(a.service, a.metric)))
-                            toast.success(r.deduplicated ? 'Already in the register' : 'Promoted to incident', {
-                              description: `${a.metric} on ${a.service} is now tracked under Alerts.`,
-                            })
-                          },
-                          onError: (e: Error) =>
-                            toast.error('Promotion rejected', { description: e.message }),
-                        },
+                  {(() => {
+                    const tracked = openByDedupKey.get(keyOf(a.service, a.metric))
+                    if (tracked) {
+                      return (
+                        <div className="mt-2 flex items-center gap-2 rounded-md border border-ok/25 bg-ok/5 px-2.5 py-1.5">
+                          <StatusPill status={tracked.status} />
+                          <span className="text-[10px] text-muted-foreground">in register</span>
+                          <div className="ml-auto flex gap-1">
+                            {tracked.status === 'triggered' && (
+                              <button
+                                className="flex h-6 items-center gap-1 rounded border px-2 text-[10px] font-medium transition-colors disabled:opacity-50"
+                                style={{ color: TONE_COLOR.warn, borderColor: `color-mix(in oklch, ${TONE_COLOR.warn} 35%, transparent)` }}
+                                disabled={action.isPending}
+                                onClick={() =>
+                                  action.mutate(
+                                    { id: tracked.id, action: 'acknowledge' },
+                                    {
+                                      onSuccess: () => toast.success('Incident acknowledged', { description: `${a.metric} on ${a.service} · on-call notified` }),
+                                      onError: (e: Error) => toast.error('Transition rejected', { description: e.message }),
+                                    },
+                                  )
+                                }
+                              >
+                                <Check className="h-2.5 w-2.5" /> ack
+                              </button>
+                            )}
+                            <button
+                              className="flex h-6 items-center gap-1 rounded border px-2 text-[10px] font-medium transition-colors hover:bg-ok/15 disabled:opacity-50"
+                              style={{ color: TONE_COLOR.ok, borderColor: `color-mix(in oklch, ${TONE_COLOR.ok} 35%, transparent)` }}
+                              disabled={action.isPending}
+                              onClick={() =>
+                                action.mutate(
+                                  { id: tracked.id, action: 'resolve' },
+                                  {
+                                    onSuccess: () => toast.success('Incident resolved', { description: `${a.metric} on ${a.service} closed from the anomaly card` }),
+                                    onError: (e: Error) => toast.error('Transition rejected', { description: e.message }),
+                                  },
+                                )
+                              }
+                            >
+                              resolve
+                            </button>
+                          </div>
+                        </div>
                       )
-                    }}
-                  >
-                    {promoted.has(keyOf(a.service, a.metric)) || openDedupKeys.has(keyOf(a.service, a.metric))
-                      ? 'In the register →'
-                      : promote.isPending
-                        ? 'Promoting…'
-                        : 'Promote to incident'}
-                  </button>
+                    }
+                    return (
+                      <button
+                        className="mt-2 w-full rounded-md border border-dashed py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-ring hover:text-foreground disabled:opacity-50"
+                        disabled={promote.isPending || promoted.has(keyOf(a.service, a.metric))}
+                        onClick={() => {
+                          promote.mutate(
+                            {
+                              service: a.service,
+                              metric: a.metric,
+                              severity: a.severity,
+                              message: a.message,
+                              baseline: a.baseline,
+                              observed: a.observed,
+                            },
+                            {
+                              onSuccess: (r) => {
+                                setPromoted((prev) => new Set(prev).add(keyOf(a.service, a.metric)))
+                                toast.success(r.deduplicated ? 'Already in the register' : 'Promoted to incident', {
+                                  description: `${a.metric} on ${a.service} is now tracked under Alerts.`,
+                                })
+                              },
+                              onError: (e: Error) =>
+                                toast.error('Promotion rejected', { description: e.message }),
+                            },
+                          )
+                        }}
+                      >
+                        {promoted.has(keyOf(a.service, a.metric)) ? 'In the register →' : promote.isPending ? 'Promoting…' : 'Promote to incident'}
+                      </button>
+                    )
+                  })()}
                 </div>
               ))
             ) : (

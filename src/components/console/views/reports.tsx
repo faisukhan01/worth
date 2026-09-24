@@ -5,7 +5,7 @@ import { useReports, useGenerateReport, type SlaReportPayload } from '@/hooks/us
 import { EmptyState, TONE_COLOR, SectionHeader, StatusPill } from '@/components/console/primitives'
 import { Skeleton } from '@/components/ui/skeleton'
 import { toast } from 'sonner'
-import { FileBarChart, Download, Play, Gauge, Timer, ShieldCheck, Flame } from 'lucide-react'
+import { ArrowDownRight, ArrowUpRight, Check, FileBarChart, Download, Play, Gauge, Timer, ShieldCheck, Flame, GitCompareArrows, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -29,11 +29,14 @@ export function ReportsView() {
   const [windowDays, setWindowDays] = useState(14)
   const [sloTarget, setSloTarget] = useState(99.9)
   const [lastReport, setLastReport] = useState<SlaReportPayload | null>(null)
+  const [compareIds, setCompareIds] = useState<string[]>([])
+  const [comparePair, setComparePair] = useState<[SlaReportPayload, SlaReportPayload] | null>(null)
 
   const reportsQuery = useReports('')
   const generate = useGenerateReport()
 
   const reports = reportsQuery.data?.reports ?? []
+  const reportById = useMemo(() => new Map(reports.map((r) => [r.id, r])), [reports])
 
   const generateReport = () => {
     toast.promise(
@@ -155,6 +158,9 @@ export function ReportsView() {
       )}
       {shown && <ReportDetail report={shown} />}
 
+      {/* Compare ----------------------------------------------------------- */}
+      {comparePair && <ReportCompare a={comparePair[0]} b={comparePair[1]} onClose={() => setComparePair(null)} />}
+
       {/* History ----------------------------------------------------------- */}
       {reports.length > 0 && (
         <div className="card-surface">
@@ -162,41 +168,101 @@ export function ReportsView() {
             title="Saved reports"
             hint="persisted by reporting-core · newest first"
             right={
-              <span className="text-[11px] text-muted-foreground">
-                {reportsQuery.data?.count ?? reports.length} on file
-              </span>
+              <div className="flex items-center gap-2">
+                {compareIds.length > 0 && (
+                  <>
+                    <span className="text-[11px] tabular text-muted-foreground">{compareIds.length}/2 selected</span>
+                    <Button
+                      size="sm"
+                      className="h-7 gap-1.5 px-2.5 text-[11px]"
+                      disabled={compareIds.length !== 2}
+                      title={compareIds.length === 2 ? 'Render drift comparison' : 'pick one more report'}
+                      onClick={() => {
+                        const [a, b] = compareIds.map((id) => reportById.get(id)!)
+                        if (a && b) {
+                          setComparePair([a, b])
+                          toast.success('Comparison ready', { description: `${a.serviceId} vs ${b.serviceId} — drift table below` })
+                        }
+                      }}
+                    >
+                      <GitCompareArrows className="h-3 w-3" />
+                      Compare
+                    </Button>
+                    <button
+                      onClick={() => setCompareIds([])}
+                      className="flex h-7 items-center gap-1 rounded-md border px-2 text-[11px] text-muted-foreground transition-colors hover:border-ring hover:text-foreground"
+                    >
+                      <X className="h-3 w-3" /> clear
+                    </button>
+                  </>
+                )}
+                <span className="text-[11px] text-muted-foreground">
+                  {reportsQuery.data?.count ?? reports.length} on file
+                </span>
+              </div>
             }
           />
           <div className="divide-y divide-border/50 border-t border-border/50">
-            {reports.map((r) => (
-              <button
-                key={r.id}
-                onClick={() => setLastReport(r)}
-                className={cn(
-                  'flex w-full flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 text-left text-xs transition-colors hover:bg-accent/40',
-                  shown?.id === r.id && 'bg-accent/60',
-                )}
-              >
-                <span className="w-40 font-mono text-foreground/90">{r.serviceId}</span>
-                <span className="tabular text-muted-foreground">
-                  {new Date(r.from).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} →{' '}
-                  {new Date(r.to).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
-                </span>
-                <span className="tabular">SLO {r.sloTarget}%</span>
-                <span
-                  className="tabular font-medium"
-                  style={{ color: availColor(r.summary.availabilityPct, r.sloTarget) }}
+            {reports.map((r) => {
+              const selIdx = compareIds.indexOf(r.id)
+              const selected = selIdx >= 0
+              return (
+                <div
+                  key={r.id}
+                  className={cn(
+                    'flex w-full flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 text-left text-xs transition-colors hover:bg-accent/40',
+                    shown?.id === r.id && 'bg-accent/60',
+                    selected && 'bg-primary/5 ring-1 ring-inset ring-primary/40',
+                  )}
                 >
-                  {r.summary.availabilityPct.toFixed(3)}%
-                </span>
-                <span className="tabular text-muted-foreground">
-                  burn ×{r.summary.burnRate.toFixed(2)}
-                </span>
-                <span className="ml-auto tabular text-muted-foreground">
-                  {r.incidents.length} incident{r.incidents.length === 1 ? '' : 's'}
-                </span>
-              </button>
-            ))}
+                  <button
+                    aria-label={selected ? 'remove from comparison' : 'add to comparison'}
+                    aria-pressed={selected}
+                    title={selected ? 'remove from comparison' : 'compare (pick two)'}
+                    onClick={() =>
+                      setCompareIds((prev) =>
+                        selected
+                          ? prev.filter((id) => id !== r.id)
+                          : prev.length >= 2
+                            ? prev
+                            : [...prev, r.id],
+                      )
+                    }
+                    className={cn(
+                      'flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors',
+                      selected ? 'border-primary bg-primary/20 text-primary' : 'border-muted-foreground/40 text-transparent hover:border-primary/60',
+                    )}
+                  >
+                    <Check className="h-3 w-3" strokeWidth={3} />
+                  </button>
+                  {selected && (
+                    <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary/20 font-mono text-[9px] font-bold text-primary">
+                      {selIdx === 0 ? 'A' : 'B'}
+                    </span>
+                  )}
+                  <button onClick={() => setLastReport(r)} className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-1 text-left">
+                    <span className="w-40 font-mono text-foreground/90">{r.serviceId}</span>
+                    <span className="tabular text-muted-foreground">
+                      {new Date(r.from).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} →{' '}
+                      {new Date(r.to).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
+                    </span>
+                    <span className="tabular">SLO {r.sloTarget}%</span>
+                    <span
+                      className="tabular font-medium"
+                      style={{ color: availColor(r.summary.availabilityPct, r.sloTarget) }}
+                    >
+                      {r.summary.availabilityPct.toFixed(3)}%
+                    </span>
+                    <span className="tabular text-muted-foreground">
+                      burn ×{r.summary.burnRate.toFixed(2)}
+                    </span>
+                    <span className="ml-auto tabular text-muted-foreground">
+                      {r.incidents.length} incident{r.incidents.length === 1 ? '' : 's'}
+                    </span>
+                  </button>
+                </div>
+              )
+            })}
           </div>
         </div>
       )}
@@ -338,6 +404,184 @@ function ReportDetail({ report }: { report: SlaReportPayload }) {
             })}
           </div>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ---- report compare ------------------------------------------------------------
+
+/**
+ * A/B drift view for two saved reports. Metric deltas are colored by whether
+ * the change is operationally good (availability up, burn/downtime down), not
+ * by sign — comparing across services or windows stays readable.
+ */
+function ReportCompare({ a, b, onClose }: { a: SlaReportPayload; b: SlaReportPayload; onClose: () => void }) {
+  const label = (r: SlaReportPayload) =>
+    `${r.serviceId} · ${new Date(r.from).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} → ${new Date(r.to).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} · SLO ${r.sloTarget}%`
+
+  const rows: {
+    key: string
+    label: string
+    av: string
+    bv: string
+    delta: number
+    goodWhen: 'up' | 'down'
+    fmt: (n: number) => string
+  }[] = [
+    {
+      key: 'avail',
+      label: 'Availability',
+      av: `${a.summary.availabilityPct.toFixed(3)}%`,
+      bv: `${b.summary.availabilityPct.toFixed(3)}%`,
+      delta: b.summary.availabilityPct - a.summary.availabilityPct,
+      goodWhen: 'up',
+      fmt: (n) => `${n >= 0 ? '+' : ''}${n.toFixed(3)}pp`,
+    },
+    {
+      key: 'budget',
+      label: 'Error budget left',
+      av: `${a.summary.errorBudgetPctRemaining.toFixed(1)}%`,
+      bv: `${b.summary.errorBudgetPctRemaining.toFixed(1)}%`,
+      delta: b.summary.errorBudgetPctRemaining - a.summary.errorBudgetPctRemaining,
+      goodWhen: 'up',
+      fmt: (n) => `${n >= 0 ? '+' : ''}${n.toFixed(1)}pp`,
+    },
+    {
+      key: 'burn',
+      label: 'Burn rate',
+      av: `×${a.summary.burnRate.toFixed(2)}`,
+      bv: `×${b.summary.burnRate.toFixed(2)}`,
+      delta: b.summary.burnRate - a.summary.burnRate,
+      goodWhen: 'down',
+      fmt: (n) => `${n >= 0 ? '×+' : '×'}${n.toFixed(2)}`,
+    },
+    {
+      key: 'downtime',
+      label: 'Downtime',
+      av: `${a.summary.totalDowntime.toFixed(1)}m`,
+      bv: `${b.summary.totalDowntime.toFixed(1)}m`,
+      delta: b.summary.totalDowntime - a.summary.totalDowntime,
+      goodWhen: 'down',
+      fmt: (n) => `${n >= 0 ? '+' : ''}${n.toFixed(1)}m`,
+    },
+    {
+      key: 'failed',
+      label: 'Failed requests',
+      av: fmtCompact(a.summary.failedRequests),
+      bv: fmtCompact(b.summary.failedRequests),
+      delta: b.summary.failedRequests - a.summary.failedRequests,
+      goodWhen: 'down',
+      fmt: (n) => `${n >= 0 ? '+' : ''}${fmtCompact(Math.abs(n))}${n >= 0 ? '' : ''}`,
+    },
+    {
+      key: 'incidents',
+      label: 'Episodes',
+      av: String(a.incidents.length),
+      bv: String(b.incidents.length),
+      delta: b.incidents.length - a.incidents.length,
+      goodWhen: 'down',
+      fmt: (n) => `${n >= 0 ? '+' : ''}${Math.round(n)}`,
+    },
+  ]
+
+  // Day-aligned availability deltas (dates present in both windows).
+  const bByDate = new Map(b.daily.map((d) => [d.date, d]))
+  const dayDeltas = a.daily
+    .filter((d) => bByDate.has(d.date))
+    .map((d) => ({ date: d.date, delta: bByDate.get(d.date)!.uptimePct - d.uptimePct }))
+  const maxAbsDay = Math.max(0.05, ...dayDeltas.map((d) => Math.abs(d.delta)))
+
+  return (
+    <div className="rise-in space-y-4">
+      <div className="card-surface">
+        <SectionHeader
+          title="Report comparison"
+          hint="drift computed locally from the two saved reports"
+          right={
+            <button
+              onClick={onClose}
+              className="flex h-7 items-center gap-1 rounded-md border px-2 text-[11px] text-muted-foreground transition-colors hover:border-ring hover:text-foreground"
+            >
+              <X className="h-3 w-3" /> close
+            </button>
+          }
+        />
+        <div className="flex flex-wrap items-center gap-2 px-4 pb-3 text-[11px]">
+          <span className="rounded-full bg-primary/15 px-2.5 py-1 font-mono font-semibold text-primary">A · {label(a)}</span>
+          <GitCompareArrows className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="rounded-full border border-primary/40 px-2.5 py-1 font-mono font-semibold text-primary">B · {label(b)}</span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 px-4 pb-4 lg:grid-cols-6">
+          {rows.map((row) => {
+            const improved = row.goodWhen === 'up' ? row.delta > 0 : row.delta < 0
+            const flat = Math.abs(row.delta) < 1e-9
+            const color = flat ? 'var(--muted-foreground)' : improved ? 'var(--ok)' : 'var(--crit)'
+            const Arrow = row.delta >= 0 ? ArrowUpRight : ArrowDownRight
+            return (
+              <div
+                key={row.key}
+                className="rounded-lg border bg-card/40 p-3 transition-all duration-200 hover:-translate-y-0.5 hover:border-ring/40"
+              >
+                <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{row.label}</div>
+                <div className="mt-1.5 flex items-baseline gap-1.5 text-[13px] tabular">
+                  <span className="text-foreground/70">{row.av}</span>
+                  <Arrow className="h-3 w-3 shrink-0" style={{ color }} />
+                  <span className="font-semibold" style={{ color: flat ? undefined : color }}>{row.bv}</span>
+                </div>
+                <div className="mt-1 text-[10px] font-medium tabular" style={{ color }}>
+                  {flat ? 'no change' : row.fmt(row.delta)}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        {dayDeltas.length > 0 && (
+          <div className="border-t border-border/50 px-4 py-3">
+            <div className="mb-2 flex items-baseline justify-between text-[11px]">
+              <span className="font-medium">Daily availability drift</span>
+              <span className="text-[10px] text-muted-foreground">
+                {dayDeltas.length} shared days · bar = B − A · green = B better
+              </span>
+            </div>
+            <div className="scroll-thin max-h-40 space-y-[3px] overflow-y-auto pr-1">
+              {dayDeltas.map((d) => {
+                const w = (Math.abs(d.delta) / maxAbsDay) * 50
+                const good = d.delta > 0
+                const flatDay = d.delta === 0
+                return (
+                  <div key={d.date} className="group flex items-center gap-2 text-[10px] tabular" title={`${d.date}: ${d.delta >= 0 ? '+' : ''}${d.delta.toFixed(3)}pp`}>
+                    <span className="w-20 shrink-0 text-muted-foreground">{d.date.slice(5)}</span>
+                    <div className="relative h-2 flex-1">
+                      <div className="absolute inset-y-0 left-1/2 w-px bg-border" />
+                      {flatDay ? (
+                        <div className="absolute inset-y-0 left-1/2 h-2 w-2 -translate-x-1/2 rounded-full bg-muted-foreground/30" />
+                      ) : good ? (
+                        <div
+                          className="absolute inset-y-0 left-1/2 rounded-r-sm transition-all group-hover:opacity-100"
+                          style={{ width: `${w}%`, background: 'var(--ok)', opacity: 0.85 }}
+                        />
+                      ) : (
+                        <div
+                          className="absolute inset-y-0 rounded-l-sm transition-all group-hover:opacity-100"
+                          style={{ right: '50%', width: `${w}%`, background: 'var(--crit)', opacity: 0.85 }}
+                        />
+                      )}
+                    </div>
+                    <span
+                      className="w-16 shrink-0 text-right font-medium"
+                      style={{ color: flatDay ? 'var(--muted-foreground)' : good ? 'var(--ok)' : 'var(--crit)' }}
+                    >
+                      {d.delta >= 0 ? '+' : ''}{d.delta.toFixed(3)}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -1,17 +1,29 @@
 'use client'
 
-import { useOverview } from '@/hooks/use-console-data'
+import { useMemo } from 'react'
+import { useOverview, useReports, type SlaReportPayload } from '@/hooks/use-console-data'
 import { RANGES, useConsole } from '@/store/console-store'
 import { KpiTile, StatusPill, LiveDot, SectionHeader, EmptyState, TONE_COLOR, statusTone } from '@/components/console/primitives'
 import { Sparkline, AreaChart, UptimeRibbon } from '@/components/console/charts'
 import { fmtNum, fmtPct, fmtMs, timeAgo } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { Skeleton } from '@/components/ui/skeleton'
-import { AlertTriangle, ArrowUpRight, Cpu, MemoryStick, Radio, ServerCrash } from 'lucide-react'
+import { AlertTriangle, ArrowUpRight, Cpu, Flame, Gauge, MemoryStick, Radio, ServerCrash } from 'lucide-react'
 
 export function OverviewView() {
   const { data, isLoading } = useOverview()
   const { range, setRange, setView } = useConsole()
+  // SLO panel is fed by the C# reporting plane (:4200) — latest report per service.
+  const reportsQuery = useReports('')
+  const latestByService = useMemo(() => {
+    const map = new Map<string, SlaReportPayload>()
+    for (const r of reportsQuery.data?.reports ?? []) {
+      if (!map.has(r.serviceId)) map.set(r.serviceId, r) // list is newest first
+    }
+    return map
+  }, [reportsQuery.data])
+  // The newest report overall also powers the host ribbon with real daily uptime.
+  const latestReport = reportsQuery.data?.reports?.[0] ?? null
 
   if (isLoading && !data) {
     return (
@@ -147,15 +159,41 @@ export function OverviewView() {
               tone={host.memNow > 90 ? 'crit' : host.memNow > 75 ? 'warn' : 'ok'}
             />
             <div className="rounded-lg border bg-card/40 p-3">
-              <div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary" /> 30-day uptime
-              </div>
-              <UptimeRibbon values={Array.from({ length: 30 }, (_, i) => 99.9 + ((i * 7) % 10) / 100)} target={99.9} />
-              <div className="mt-1.5 flex justify-between text-[10px] text-muted-foreground">
-                <span>90d ago</span>
-                <span className="tabular text-foreground/70">99.94%</span>
-                <span>today</span>
-              </div>
+              {latestReport ? (
+                <>
+                  <div className="mb-2 flex items-baseline justify-between gap-2">
+                    <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                      <span className="h-1.5 w-1.5 rounded-full bg-primary" /> Daily uptime · {latestReport.serviceId}
+                    </div>
+                    <span className="text-[10px] text-muted-foreground">
+                      SLO {latestReport.sloTarget}%
+                    </span>
+                  </div>
+                  <UptimeRibbon
+                    values={[...latestReport.daily].reverse().map((d) => d.uptimePct)}
+                    target={latestReport.sloTarget}
+                  />
+                  <div className="mt-1.5 flex justify-between text-[10px] text-muted-foreground">
+                    <span>{latestReport.daily[0]?.date}</span>
+                    <span className="tabular text-foreground/70">
+                      {(latestReport.daily.reduce((acc, d) => acc + d.uptimePct, 0) / (latestReport.daily.length || 1)).toFixed(2)}%
+                    </span>
+                    <span>today</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="mb-2 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                    <span className="h-1.5 w-1.5 rounded-full bg-primary" /> 30-day uptime
+                  </div>
+                  <UptimeRibbon values={Array.from({ length: 30 }, (_, i) => 99.9 + ((i * 7) % 10) / 100)} target={99.9} />
+                  <div className="mt-1.5 flex justify-between text-[10px] text-muted-foreground">
+                    <span>90d ago</span>
+                    <span className="tabular text-foreground/70">99.94%</span>
+                    <span>today</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -230,6 +268,69 @@ export function OverviewView() {
             </div>
           </div>
 
+          {/* Error budgets — real SLO math from the C# reporting plane */}
+          <div className="card-surface">
+            <SectionHeader
+              title="Error budgets"
+              hint="latest SLA per service"
+              right={
+                <button onClick={() => setView('reports')} className="flex items-center gap-1 text-[11px] font-medium text-primary hover:underline">
+                  reports <ArrowUpRight className="h-3 w-3" />
+                </button>
+              }
+            />
+            <div className="space-y-1.5 px-4 pb-4">
+              {latestByService.size > 0 ? (
+                [...latestByService.values()].slice(0, 4).map((r) => (
+                  <button
+                    key={r.id}
+                    onClick={() => setView('reports')}
+                    className="group block w-full rounded-lg border bg-card/40 px-3 py-2 text-left transition-colors hover:border-ring/60 hover:bg-accent/30"
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="truncate font-mono text-[11px]">{r.serviceId}</span>
+                      <span className="shrink-0 text-[12px] font-semibold tabular" style={{ color: availTone(r.summary.availabilityPct, r.sloTarget) }}>
+                        {r.summary.availabilityPct.toFixed(3)}%
+                      </span>
+                    </div>
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{
+                            width: `${Math.max(2, Math.min(100, r.summary.errorBudgetPctRemaining))}%`,
+                            background: budgetColor(r.summary.errorBudgetPctRemaining),
+                          }}
+                        />
+                      </div>
+                      <span className="w-28 shrink-0 whitespace-nowrap text-right text-[10px] tabular text-muted-foreground">
+                        {r.summary.errorBudgetPctRemaining <= 0 ? (
+                          <span className="font-medium" style={{ color: TONE_COLOR.crit }}>budget spent</span>
+                        ) : (
+                          `${r.summary.errorBudgetPctRemaining.toFixed(0)}% left`
+                        )}
+                        {' · '}
+                        <Flame
+                          className="ml-0.5 inline h-2.5 w-2.5 align-[-2px]"
+                          style={{ color: r.summary.burnRate >= 1 ? TONE_COLOR.warn : TONE_COLOR.ok }}
+                        />
+                        {' ×'}{r.summary.burnRate.toFixed(1)}
+                      </span>
+                    </div>
+                  </button>
+                ))
+              ) : (
+                <button
+                  onClick={() => setView('reports')}
+                  className="flex w-full items-center gap-2 rounded-lg border border-dashed border-muted-foreground/25 px-3 py-3 text-left text-[11px] text-muted-foreground transition-colors hover:border-ring hover:text-foreground"
+                >
+                  <Gauge className="h-3.5 w-3.5 shrink-0" />
+                  No SLA reports yet — generate one to track error budgets.
+                </button>
+              )}
+            </div>
+          </div>
+
           {/* Open incidents */}
           <div className="card-surface">
             <SectionHeader
@@ -264,6 +365,18 @@ export function OverviewView() {
       </div>
     </div>
   )
+}
+
+function availTone(pct: number, slo: number): string {
+  if (pct >= slo) return 'var(--ok)'
+  if (slo - pct > 0.5) return 'var(--crit)'
+  return 'var(--warn)'
+}
+
+function budgetColor(remainingPct: number): string {
+  if (remainingPct <= 0) return TONE_COLOR.crit
+  if (remainingPct < 25) return TONE_COLOR.warn
+  return TONE_COLOR.ok
 }
 
 function HostMetric({

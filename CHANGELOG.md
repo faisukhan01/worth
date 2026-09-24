@@ -5,6 +5,22 @@ All notable changes to Lodestar are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added - console iteration 5
+- **Error budgets panel (Overview)** - latest SLA report per service from the
+  C# reporting plane: availability, remaining budget bar, burn rate; the host
+  ribbon now plots real daily uptime from the newest report instead of
+  synthetic data.
+- **Inline incident actions (AIOps)** - anomaly cards that are already in the
+  incident register expose acknowledge / resolve directly (PATCH lifecycle
+  with 409 guards), closing the promote -> ack -> resolve loop in one view.
+- **Report comparison (Reports)** - pick any two saved SLA reports (A/B chips
+  in the saved list) and render a drift table (availability, budget, burn,
+  downtime, failed requests, episodes) plus a day-aligned availability
+  tornado strip with exact deltas; deltas are colored by operational impact,
+  not sign.
+
 ## [0.1.0] - 2025-09-24
 
 Initial release of the Lodestar Enterprise Observability & AIOps platform.
