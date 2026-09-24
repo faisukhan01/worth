@@ -1,0 +1,944 @@
+     1→'use client'
+     2→
+     3→import { useEffect, useRef, useState } from 'react'
+     4→import { useAlerts, useIncidentAction, useCreateRule, useTestRule, useBulkIncidentAction, useAssignIncident, useSettings, useActivity, type OpenIncident } from '@/hooks/use-console-data'
+     5→import { StatusPill, EmptyState, TONE_COLOR, statusTone, SectionHeader } from '@/components/console/primitives'
+     6→import { timeAgo } from '@/lib/format'
+     7→import { useIncidentFilterPresets, type IncidentFilterPreset } from '@/lib/incident-filter-store'
+     8→import { cn } from '@/lib/utils'
+     9→import { Button } from '@/components/ui/button'
+    10→import { Skeleton } from '@/components/ui/skeleton'
+    11→import { Input } from '@/components/ui/input'
+    12→import { Checkbox } from '@/components/ui/checkbox'
+    13→import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select'
+    14→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog'
+    15→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+    16→import { toast } from 'sonner'
+    17→import { BellRing, Crosshair, FlaskConical, Gauge, Plus, ShieldCheck, Siren, Timer, UserPlus, Filter, Pin, PinOff, History } from 'lucide-react'
+    18→
+    19→interface TimelineEntry {
+    20→  ts: string
+    21→  event: string
+    22→  detail: string
+    23→}
+    24→
+    25→interface IncidentFilters {
+    26→  status: string
+    27→  severity: string
+    28→  service: string
+    29→  assignee: string
+    30→}
+    31→
+    32→const NO_FILTERS: IncidentFilters = { status: '', severity: '', service: '', assignee: '' }
+    33→
+    34→function filtersActive(f: IncidentFilters): boolean {
+    35→  return Boolean(f.status || f.severity || f.service || f.assignee)
+    36→}
+    37→
+    38→function filterLabel(f: IncidentFilters): string {
+    39→  const parts: string[] = []
+    40→  if (f.status) parts.push(`status:${f.status}`)
+    41→  if (f.severity) parts.push(`sev:${f.severity}`)
+    42→  if (f.service) parts.push(f.service)
+    43→  if (f.assignee === '__none') parts.push('unassigned')
+    44→  else if (f.assignee) parts.push(`@${f.assignee.split(' ')[0].toLowerCase()}`)
+    45→  return parts.join(' · ') || 'empty'
+    46→}
+    47→
+    48→const EVENT_TONE: Record<string, 'ok' | 'warn' | 'crit' | 'neutral'> = {
+    49→  triggered: 'crit',
+    50→  acknowledged: 'warn',
+    51→  mitigated: 'neutral',
+    52→  resolved: 'ok',
+    53→  assignment: 'neutral',
+    54→}
+    55→
+    56→export function AlertsView() {
+    57→  const { data, isLoading } = useAlerts()
+    58→  const { data: settings } = useSettings()
+    59→  const incidentAction = useIncidentAction()
+    60→  const testRule = useTestRule()
+    61→  const bulk = useBulkIncidentAction()
+    62→  const assignIncident = useAssignIncident()
+    63→  const [selected, setSelected] = useState<OpenIncident | null>(null)
+    64→  const [checked, setChecked] = useState<Set<string>>(new Set())
+    65→  const [assignPick, setAssignPick] = useState('')
+    66→  const [filters, setFilters] = useState<IncidentFilters>(NO_FILTERS)
+    67→  const [presets, savePreset, removePreset] = useIncidentFilterPresets()
+    68→  const [activityEvent, setActivityEvent] = useState('')
+    69→  const activity = useActivity('', activityEvent)
+    70→  const [tab, setTab] = useState('incidents')
+    71→  const [focusId, setFocusId] = useState<string | null>(null)
+    72→  const [flashId, setFlashId] = useState<string | null>(null)
+    73→  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+    74→
+    75→  // Deep-link: once the register has rendered the focused incident, scroll it
+    76→  // into view and flash it so the eye can find the row instantly.
+    77→  useEffect(() => {
+    78→    if (!focusId) return
+    79→    const t = setTimeout(() => {
+    80→      const el = document.querySelector(`[data-incident-id="${focusId}"]`)
+    81→      if (el) {
+    82→        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    83→        setFlashId(focusId)
+    84→        flashTimer.current = setTimeout(() => setFlashId(null), 2600)
+    85→      }
+    86→    }, 80)
+    87→    return () => {
+    88→      clearTimeout(t)
+    89→      if (flashTimer.current) clearTimeout(flashTimer.current)
+    90→    }
+    91→  }, [focusId])
+    92→
+    93→  /** Jump from an Activity row to the incident: incidents tab, filters reset,
+    94→   *  card expanded and flashed. */
+    95→  const jumpToIncident = (incidentId: string) => {
+    96→    const inc = data?.incidents.find((i) => i.id === incidentId)
+    97→    setFilters(NO_FILTERS)
+    98→    setTab('incidents')
+    99→    setFocusId(incidentId)
+   100→    if (inc) setSelected(inc as OpenIncident)
+   101→  }
+   102→
+   103→  if (isLoading && !data) {
+   104→    return (
+   105→      <div className="space-y-3">
+   106→        <Skeleton className="h-9 w-64" />
+   107→        <Skeleton className="h-40" />
+   108→        <Skeleton className="h-64" />
+   109→      </div>
+   110→    )
+   111→  }
+   112→  if (!data) return <EmptyState title="Alert register unavailable" />
+   113→
+   114→  const matches = (i: OpenIncident) =>
+   115→    (!filters.status || i.status === filters.status) &&
+   116→    (!filters.severity || i.severity === filters.severity) &&
+   117→    (!filters.service || i.serviceKey === filters.service) &&
+   118→    (!filters.assignee || (filters.assignee === '__none' ? !i.assignee : i.assignee === filters.assignee))
+   119→
+   120→  const open = data.incidents.filter((i) => i.status !== 'resolved' && matches(i))
+   121→  const resolved = data.incidents.filter((i) => i.status === 'resolved' && matches(i))
+   122→  // Deep-linked resolved incidents must be visible even beyond the usual 6-row tail.
+   123→  const resolvedShown = focusId && resolved.some((r) => r.id === focusId) ? resolved : resolved.slice(0, 6)
+   124→
+   125→  const act = (id: string, action: 'acknowledge' | 'mitigate' | 'resolve') => {
+   126→    incidentAction.mutate(
+   127→      { id, action },
+   128→      {
+   129→        onSuccess: () => toast.success(`Incident ${action}d`, { description: 'Timeline updated in the register.' }),
+   130→        onError: (e: Error) => toast.error('Transition rejected', { description: e.message }),
+   131→      },
+   132→    )
+   133→    if (selected?.id === id) setSelected(null)
+   134→  }
+   135→
+   136→  /** Evaluate a saved rule, then offer a one-click drill from the toast. */
+   137→  const testSavedRule = (rule: { id: string; serviceKey: string; metric: string; comparator: string; threshold: number; severity: string }) => {
+   138→    testRule.mutate(
+   139→      { ruleId: rule.id },
+   140→      {
+   141→        onSuccess: (result) => {
+   142→          const e = result.evaluation
+   143→          if (!e.evaluable) {
+   144→            toast.warning('Rule could not be evaluated', { description: e.reason })
+   145→            return
+   146→          }
+   147→          const verdict = e.wouldFire ? 'WOULD FIRE' : 'would not fire'
+   148→          toast(`Test: ${verdict}`, {
+   149→            duration: 10_000,
+   150→            description: `${rule.metric} on ${rule.serviceKey} · current ${e.currentValue} vs ${rule.comparator} ${rule.threshold}`,
+   151→            ...(e.wouldFire
+   152→              ? {
+   153→                  action: {
+   154→                    label: 'Fire drill',
+   155→                    onClick: () => fireDrill(rule.id),
+   156→                  },
+   157→                }
+   158→              : {}),
+   159→          })
+   160→        },
+   161→        onError: (err: Error) => toast.error('Test failed', { description: err.message }),
+   162→      },
+   163→    )
+   164→  }
+   165→
+   166→  const fireDrill = (ruleId: string) => {
+   167→    testRule.mutate(
+   168→      { ruleId, mode: 'drill' },
+   169→      {
+   170→        onSuccess: (result) => {
+   171→          if (result.drill?.deduplicated) {
+   172→            toast.info('Drill already open', { description: 'Resolve the existing drill incident before re-firing.' })
+   173→          } else {
+   174→            toast.success('Drill incident registered', { description: 'Find it under Incidents tagged DRILL.' })
+   175→          }
+   176→        },
+   177→        onError: (err: Error) => toast.error('Drill rejected', { description: err.message }),
+   178→      },
+   179→    )
+   180→  }
+   181→
+   182→  const team = settings?.team ?? []
+   183→
+   184→  const openIds = data.incidents.filter((i) => i.status !== 'resolved' && matches(i)).map((i) => i.id)
+   185→  const allChecked = openIds.length > 0 && openIds.every((id) => checked.has(id))
+   186→
+   187→  const assigneeKeys = [...new Set(data.incidents.map((i) => i.assignee).filter((a): a is string => Boolean(a)))].sort()
+   188→  const serviceKeys = [...new Set(data.incidents.map((i) => i.serviceKey))].sort()
+   189→
+   190→  const toggleRow = (id: string) => {
+   191→    setChecked((prev) => {
+   192→      const next = new Set(prev)
+   193→      if (next.has(id)) next.delete(id)
+   194→      else next.add(id)
+   195→      return next
+   196→    })
+   197→  }
+   198→
+   199→  const toggleAll = () => {
+   200→    setChecked(allChecked ? new Set() : new Set(openIds))
+   201→  }
+   202→
+   203→  const summarize = (r: { updated: number; results: { ok: boolean }[] }, verb: string) => {
+   204→    const skipped = r.results.length - r.updated
+   205→    if (r.updated === 0) {
+   206→      toast.info(`Nothing ${verb}`, { description: `${skipped} incident(s) were not in a state for that transition.` })
+   207→    } else {
+   208→      toast.success(`${verb} ${r.updated} incident(s)`, { description: skipped > 0 ? `${skipped} skipped (state conflict or missing).` : 'Register refreshed.' })
+   209→    }
+   210→  }
+   211→
+   212→  const bulkAct = (action: 'acknowledge' | 'mitigate' | 'resolve') => {
+   213→    bulk.mutate(
+   214→      { ids: [...checked], action },
+   215→      {
+   216→        onSuccess: (r) => {
+   217→          summarize(r, action === 'acknowledge' ? 'Acknowledged' : action === 'mitigate' ? 'Mitigated' : 'Resolved')
+   218→          setChecked(new Set())
+   219→        },
+   220→        onError: (e: Error) => toast.error('Bulk action failed', { description: e.message }),
+   221→      },
+   222→    )
+   223→  }
+   224→
+   225→  const bulkAssign = (name: string | null) => {
+   226→    bulk.mutate(
+   227→      { ids: [...checked], assignee: name },
+   228→      {
+   229→        onSuccess: (r) => {
+   230→          summarize(r, name ? `Assigned to ${name}` : 'Unassigned')
+   231→          setChecked(new Set())
+   232→        },
+   233→        onError: (e: Error) => toast.error('Bulk assignment failed', { description: e.message }),
+   234→      },
+   235→    )
+   236→  }
+   237→
+   238→  const assignOne = (id: string, name: string | null) => {
+   239→    assignIncident.mutate(
+   240→      { id, assignee: name },
+   241→      {
+   242→        onSuccess: () => toast.success(name ? `Assigned to ${name}` : 'Unassigned'),
+   243→        onError: (e: Error) => toast.error('Assignment rejected', { description: e.message }),
+   244→      },
+   245→    )
+   246→  }
+   247→
+   248→  return (
+   249→    <div className="space-y-4">
+   250→      <div className="flex flex-wrap items-center justify-between gap-3">
+   251→        <div>
+   252→          <h1 className="text-lg font-semibold tracking-tight">Alerts & incidents</h1>
+   253→          <p className="text-xs text-muted-foreground">
+   254→            {data.counts.open} open · {data.counts.rulesEnabled}/{data.counts.rules} rules armed
+   255→            {filtersActive(filters) && (
+   256→              <>
+   257→                {' '}· <span className="text-foreground/80">{open.length} match filter</span>
+   258→              </>
+   259→            )}
+   260→          </p>
+   261→        </div>
+   262→        <NewRuleDialog />
+   263→      </div>
+   264→
+   265→      {/* Summary strip - counts follow the active filter */}
+   266→      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+   267→        <StatCard icon={<Siren className="h-3.5 w-3.5" />} label="Triggered" value={data.counts.triggered} filteredValue={filtersActive(filters) ? data.incidents.filter((i) => i.status === 'triggered' && matches(i)).length : undefined} tone="crit" />
+   268→        <StatCard icon={<BellRing className="h-3.5 w-3.5" />} label="Acknowledged" value={data.counts.acknowledged} filteredValue={filtersActive(filters) ? data.incidents.filter((i) => i.status === 'acknowledged' && matches(i)).length : undefined} tone="warn" />
+   269→        <StatCard icon={<Timer className="h-3.5 w-3.5" />} label="Mitigated" value={data.counts.mitigated} filteredValue={filtersActive(filters) ? data.incidents.filter((i) => i.status === 'mitigated' && matches(i)).length : undefined} tone="neutral" />
+   270→        <StatCard icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Resolved (register)" value={data.counts.resolved} filteredValue={filtersActive(filters) ? data.incidents.filter((i) => i.status === 'resolved' && matches(i)).length : undefined} tone="ok" />
+   271→      </div>
+   272→
+   273→      <Tabs value={tab} onValueChange={setTab}>
+   274→        <TabsList className="h-8">
+   275→          <TabsTrigger value="incidents" className="text-xs">Incidents</TabsTrigger>
+   276→          <TabsTrigger value="rules" className="text-xs">Rules</TabsTrigger>
+   277→          <TabsTrigger value="activity" className="gap-1 text-xs">
+   278→            <History className="h-3 w-3" /> Activity
+   279→          </TabsTrigger>
+   280→        </TabsList>
+   281→
+   282→        <TabsContent value="incidents" className="mt-3 space-y-2">
+   283→          {/* Saved-filter chip row */}
+   284→          {(presets.length > 0 || filtersActive(filters)) && (
+   285→            <div className="flex flex-wrap items-center gap-1.5 px-1">
+   286→              {presets.map((p) => {
+   287→                const active = filterLabel(filters) === filterLabel({ status: p.status, severity: p.severity, service: p.service, assignee: p.assignee })
+   288→                return (
+   289→                  <span
+   290→                    key={p.id}
+   291→                    role="button"
+   292→                    tabIndex={0}
+   293→                    onClick={() => setFilters({ status: p.status, severity: p.severity, service: p.service, assignee: p.assignee })}
+   294→                    onKeyDown={(e) => {
+   295→                      if (e.key === 'Enter' || e.key === ' ') {
+   296→                        e.preventDefault()
+   297→                        setFilters({ status: p.status, severity: p.severity, service: p.service, assignee: p.assignee })
+   298→                      }
+   299→                    }}
+   300→                    className={cn(
+   301→                      'group inline-flex cursor-pointer items-center gap-1 rounded-full border px-2.5 py-0.5 text-[10px] transition-colors',
+   302→                      active
+   303→                        ? 'border-primary/50 bg-primary/15 text-foreground'
+   304→                        : 'bg-muted/40 text-muted-foreground hover:border-ring/50 hover:text-foreground',
+   305→                    )}
+   306→                  >
+   307→                    <Filter className="h-2.5 w-2.5" />
+   308→                    {p.label}
+   309→                    <button
+   310→                      aria-label={`Remove preset ${p.label}`}
+   311→                      className="ml-0.5 opacity-0 transition-opacity group-hover:opacity-100"
+   312→                      onClick={(e) => { e.stopPropagation(); removePreset(p.id) }}
+   313→                    >
+   314→                      <PinOff className="h-2.5 w-2.5" />
+   315→                    </button>
+   316→                  </span>
+   317→                )
+   318→              })}
+   319→              {filtersActive(filters) && (
+   320→                <button
+   321→                  className="text-[10px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+   322→                  onClick={() => setFilters(NO_FILTERS)}
+   323→                >
+   324→                  clear
+   325→                </button>
+   326→              )}
+   327→            </div>
+   328→          )}
+   329→
+   330→          {/* Filter bar */}
+   331→          <div className="card-surface flex flex-wrap items-center gap-2 px-3 py-2">
+   332→            <Filter className="h-3 w-3 shrink-0 text-muted-foreground" />
+   333→            <Select value={filters.status} onValueChange={(v) => setFilters({ ...filters, status: v === '__all' ? '' : v })}>
+   334→              <SelectTrigger className="h-7 w-[7.5rem] text-[11px]"><SelectValue placeholder="Status" /></SelectTrigger>
+   335→              <SelectContent>
+   336→                <SelectItem value="__all" className="text-xs">any status</SelectItem>
+   337→                {['triggered', 'acknowledged', 'mitigated', 'resolved'].map((s) => (
+   338→                  <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>
+   339→                ))}
+   340→              </SelectContent>
+   341→            </Select>
+   342→            <Select value={filters.severity} onValueChange={(v) => setFilters({ ...filters, severity: v === '__all' ? '' : v })}>
+   343→              <SelectTrigger className="h-7 w-[7.5rem] text-[11px]"><SelectValue placeholder="Severity" /></SelectTrigger>
+   344→              <SelectContent>
+   345→                <SelectItem value="__all" className="text-xs">any severity</SelectItem>
+   346→                {['critical', 'warning', 'info'].map((s) => (
+   347→                  <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>
+   348→                ))}
+   349→              </SelectContent>
+   350→            </Select>
+   351→            <Select value={filters.service} onValueChange={(v) => setFilters({ ...filters, service: v === '__all' ? '' : v })}>
+   352→              <SelectTrigger className="h-7 w-40 font-mono text-[11px]"><SelectValue placeholder="Service" /></SelectTrigger>
+   353→              <SelectContent>
+   354→                <SelectItem value="__all" className="text-xs">any service</SelectItem>
+   355→                {serviceKeys.map((s) => (
+   356→                  <SelectItem key={s} value={s} className="font-mono text-xs">{s}</SelectItem>
+   357→                ))}
+   358→              </SelectContent>
+   359→            </Select>
+   360→            <Select value={filters.assignee} onValueChange={(v) => setFilters({ ...filters, assignee: v === '__all' ? '' : v })}>
+   361→              <SelectTrigger className="h-7 w-40 text-[11px]"><SelectValue placeholder="Assignee" /></SelectTrigger>
+   362→              <SelectContent>
+   363→                <SelectItem value="__all" className="text-xs">any assignee</SelectItem>
+   364→                {assigneeKeys.map((a) => (
+   365→                  <SelectItem key={a} value={a} className="text-xs">{a}</SelectItem>
+   366→                ))}
+   367→                <SelectItem value="__none" className="text-xs text-muted-foreground">unassigned</SelectItem>
+   368→              </SelectContent>
+   369→            </Select>
+   370→            <Button
+   371→              size="sm"
+   372→              variant="ghost"
+   373→              className="ml-auto h-7 gap-1 px-2 text-[11px] text-muted-foreground"
+   374→              disabled={!filtersActive(filters)}
+   375→              onClick={() => {
+   376→                const preset: IncidentFilterPreset = {
+   377→                  id: `f${Date.now().toString(36)}`,
+   378→                  label: filterLabel(filters),
+   379→                  status: filters.status,
+   380→                  severity: filters.severity,
+   381→                  service: filters.service,
+   382→                  assignee: filters.assignee,
+   383→                }
+   384→                savePreset(preset)
+   385→                toast.success('Filter pinned', { description: `“${preset.label}” is now one click away.` })
+   386→              }}
+   387→            >
+   388→              <Pin className="h-3 w-3" /> Pin filter
+   389→            </Button>
+   390→          </div>
+   391→
+   392→          {/* Selection + bulk action bar */}
+   393→          <div className="flex flex-wrap items-center gap-2 px-1">
+   394→            <Checkbox
+   395→              checked={allChecked}
+   396→              onCheckedChange={toggleAll}
+   397→              disabled={openIds.length === 0}
+   398→              aria-label="Select all open incidents"
+   399→            />
+   400→            <span className="text-[11px] text-muted-foreground">
+   401→              {checked.size > 0 ? `${checked.size} selected` : `${openIds.length} open · select for bulk actions`}
+   402→            </span>
+   403→            {checked.size > 0 && (
+   404→              <div className="rise-in ml-auto flex flex-wrap items-center gap-1.5">
+   405→                <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={bulk.isPending} onClick={() => bulkAct('acknowledge')}>
+   406→                  Ack
+   407→                </Button>
+   408→                <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={bulk.isPending} onClick={() => bulkAct('mitigate')}>
+   409→                  Mitigate
+   410→                </Button>
+   411→                <Button size="sm" variant="outline" className="h-7 text-[11px] text-ok hover:text-ok" disabled={bulk.isPending} onClick={() => bulkAct('resolve')}>
+   412→                  Resolve
+   413→                </Button>
+   414→                <Select value={assignPick} onValueChange={(v) => { setAssignPick(''); bulkAssign(v === '__none' ? null : v) }} disabled={bulk.isPending}>
+   415→                  <SelectTrigger className="h-7 w-40 gap-1 text-[11px]" aria-label="Bulk assign to team member">
+   416→                    <UserPlus className="h-3 w-3 text-muted-foreground" />
+   417→                    <SelectValue placeholder="Assign to…" />
+   418→                  </SelectTrigger>
+   419→                  <SelectContent>
+   420→                    {team.map((m) => (
+   421→                      <SelectItem key={m.id} value={m.name} className="text-xs">
+   422→                        {m.name}
+   423→                        {m.onCall ? ' · on-call' : ''}
+   424→                      </SelectItem>
+   425→                    ))}
+   426→                    <SelectItem value="__none" className="text-xs text-muted-foreground">Unassign</SelectItem>
+   427→                  </SelectContent>
+   428→                </Select>
+   429→                <Button size="sm" variant="ghost" className="h-7 text-[11px] text-muted-foreground" onClick={() => setChecked(new Set())}>
+   430→                  Clear
+   431→                </Button>
+   432→              </div>
+   433→            )}
+   434→          </div>
+   435→          {[...open, ...resolvedShown].map((i) => {
+   436→            const tone = statusTone(i.status === 'resolved' ? i.status : i.severity)
+   437→            let timeline: TimelineEntry[] = []
+   438→            try {
+   439→              timeline = JSON.parse(i.timeline || '[]')
+   440→            } catch {
+   441→              timeline = []
+   442→            }
+   443→            return (
+   444→              <div
+   445→                key={i.id}
+   446→                data-incident-id={i.id}
+   447→                className={cn(
+   448→                  'card-surface overflow-hidden',
+   449→                  checked.has(i.id) && 'ring-1 ring-primary/40',
+   450→                  flashId === i.id && 'ring-2 ring-primary/60',
+   451→                )}
+   452→              >
+   453→                <div
+   454→                  role="button"
+   455→                  tabIndex={0}
+   456→                  aria-expanded={selected?.id === i.id}
+   457→                  className="flex w-full cursor-pointer items-start gap-3 p-4 text-left transition-colors hover:bg-accent/20"
+   458→                  onClick={() => setSelected(selected?.id === i.id ? null : (i as OpenIncident))}
+   459→                  onKeyDown={(e) => {
+   460→                    if (e.key === 'Enter' || e.key === ' ') {
+   461→                      e.preventDefault()
+   462→                      setSelected(selected?.id === i.id ? null : (i as OpenIncident))
+   463→                    }
+   464→                  }}
+   465→                >
+   466→                  {i.status !== 'resolved' && (
+   467→                    <span className="mt-0.5 shrink-0" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+   468→                      <Checkbox
+   469→                        checked={checked.has(i.id)}
+   470→                        onCheckedChange={() => toggleRow(i.id)}
+   471→                        aria-label={`Select incident ${i.title}`}
+   472→                        className="mt-1.5"
+   473→                      />
+   474→                    </span>
+   475→                  )}
+   476→                  <span className="mt-1 h-8 w-1 shrink-0 rounded-full" style={{ background: TONE_COLOR[tone] }} />
+   477→                  <div className="min-w-0 flex-1">
+   478→                    <div className="flex flex-wrap items-center gap-2">
+   479→                      <span className="text-[13px] font-medium">{i.title}</span>
+   480→                      <StatusPill status={i.status} />
+   481→                      <span className="rounded border bg-muted/40 px-1.5 py-px font-mono text-[9px] uppercase text-muted-foreground">
+   482→                        {i.source}
+   483→                      </span>
+   484→                    </div>
+   485→                    <div className="mt-0.5 flex flex-wrap items-center gap-x-3 text-[11px] text-muted-foreground">
+   486→                      <span className="font-mono">{i.serviceKey}</span>
+   487→                      <span>started {timeAgo(i.startedAt)}</span>
+   488→                      {i.assignee && <span>assignee {i.assignee}</span>}
+   489→                    </div>
+   490→                  </div>
+   491→                  {i.status !== 'resolved' && (
+   492→                    <div className="flex shrink-0 gap-1.5" onClick={(e) => e.stopPropagation()}>
+   493→                      {i.status === 'triggered' && (
+   494→                        <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={incidentAction.isPending} onClick={() => act(i.id, 'acknowledge')}>
+   495→                          Ack
+   496→                        </Button>
+   497→                      )}
+   498→                      {i.status === 'acknowledged' && (
+   499→                        <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={incidentAction.isPending} onClick={() => act(i.id, 'mitigate')}>
+   500→                          Mitigate
+   501→                        </Button>
+   502→                      )}
+   503→                      <Button size="sm" variant="ghost" className="h-7 gap-1 text-[11px] text-ok hover:text-ok" disabled={incidentAction.isPending} onClick={() => act(i.id, 'resolve')}>
+   504→                        Resolve
+   505→                      </Button>
+   506→                    </div>
+   507→                  )}
+   508→                </div>
+   509→
+   510→                {selected?.id === i.id && (
+   511→                  <div className="border-t bg-muted/10 px-6 py-4">
+   512→                    <div className="mb-3 flex flex-wrap items-center gap-2">
+   513→                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Assignee</span>
+   514→                      <Select
+   515→                        value={i.assignee ?? '__none'}
+   516→                        onValueChange={(v) => assignOne(i.id, v === '__none' ? null : v)}
+   517→                        disabled={assignIncident.isPending}
+   518→                      >
+   519→                        <SelectTrigger className="h-7 w-44 text-[11px]">
+   520→                          <SelectValue placeholder="Unassigned" />
+   521→                        </SelectTrigger>
+   522→                        <SelectContent>
+   523→                          {team.map((m) => (
+   524→                            <SelectItem key={m.id} value={m.name} className="text-xs">
+   525→                              {m.name}
+   526→                              {m.onCall ? ' · on-call' : ''}
+   527→                            </SelectItem>
+   528→                          ))}
+   529→                          <SelectItem value="__none" className="text-xs text-muted-foreground">Unassigned</SelectItem>
+   530→                        </SelectContent>
+   531→                      </Select>
+   532→                      <UserPlus className="h-3 w-3 text-muted-foreground" />
+   533→                    </div>
+   534→                    <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Timeline</div>
+   535→                    <ol className="relative space-y-3 border-l pl-4">
+   536→                      {timeline.map((t, idx) => (
+   537→                        <li key={idx} className="relative">
+   538→                          <span
+   539→                            className="absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full border-2 border-background"
+   540→                            style={{ background: TONE_COLOR[statusTone(t.event)] }}
+   541→                          />
+   542→                          <div className="flex items-center gap-2 text-[11px]">
+   543→                            <span className="font-medium capitalize">{t.event}</span>
+   544→                            <span className="text-muted-foreground">{timeAgo(t.ts)}</span>
+   545→                          </div>
+   546→                          <div className="text-[11px] text-muted-foreground">{t.detail}</div>
+   547→                        </li>
+   548→                      ))}
+   549→                    </ol>
+   550→                  </div>
+   551→                )}
+   552→              </div>
+   553→            )
+   554→          })}
+   555→          {open.length === 0 && (
+   556→            <div className="card-surface">
+   557→              <EmptyState title="No open incidents" hint="AIOps anomalies can be promoted from the AIOps view" />
+   558→            </div>
+   559→          )}
+   560→        </TabsContent>
+   561→
+   562→        <TabsContent value="rules" className="mt-3">
+   563→          <div className="card-surface overflow-hidden">
+   564→            <table className="w-full text-[12px]">
+   565→              <thead>
+   566→                <tr className="border-b bg-muted/30 text-left text-[10px] uppercase tracking-wider text-muted-foreground">
+   567→                  <th className="px-4 py-2.5 font-medium">Service</th>
+   568→                  <th className="px-3 py-2.5 font-medium">Condition</th>
+   569→                  <th className="hidden px-3 py-2.5 font-medium sm:table-cell">Window</th>
+   570→                  <th className="px-3 py-2.5 font-medium">Severity</th>
+   571→                  <th className="px-3 py-2.5 font-medium">State</th>
+   572→                  <th className="px-4 py-2.5 text-right font-medium">Test-fire</th>
+   573→                </tr>
+   574→              </thead>
+   575→              <tbody>
+   576→                {data.rules.map((r) => (
+   577→                  <tr key={r.id} className="border-b last:border-0 hover:bg-accent/20">
+   578→                    <td className="px-4 py-2.5 font-mono text-[11px]">{r.serviceKey}</td>
+   579→                    <td className="px-3 py-2.5">
+   580→                      <span className="font-mono text-[11px] text-primary">{r.metric}</span>
+   581→                      {r.metric.startsWith('slo.') && (
+   582→                        <span
+   583→                          className="ml-1.5 inline-flex items-center gap-0.5 rounded border border-violet-500/30 bg-violet-500/10 px-1 py-px align-middle text-[8px] font-semibold uppercase tracking-wider text-violet-500"
+   584→                          title="Report-backed: evaluated against the newest SLA report"
+   585→                        >
+   586→                          <Gauge className="h-2.5 w-2.5" /> SLO
+   587→                        </span>
+   588→                      )}
+   589→                      <span className="mx-1 text-muted-foreground">{r.comparator === 'above' ? '>' : '<'}</span>
+   590→                      <span className="tabular font-medium">{r.threshold}</span>
+   591→                    </td>
+   592→                    <td className="hidden px-3 py-2.5 tabular text-muted-foreground sm:table-cell">{r.windowMinutes}m</td>
+   593→                    <td className="px-3 py-2.5">
+   594→                      <StatusPill status={r.severity} />
+   595→                    </td>
+   596→                    <td className="px-3 py-2.5">
+   597→                      <span className={r.enabled ? 'text-[11px] text-ok' : 'text-[11px] text-muted-foreground'}>
+   598→                        {r.enabled ? 'armed' : 'muted'}
+   599→                      </span>
+   600→                    </td>
+   601→                    <td className="px-4 py-2.5 text-right">
+   602→                      <Button
+   603→                        size="sm"
+   604→                        variant="outline"
+   605→                        className="h-7 gap-1 px-2 text-[11px]"
+   606→                        disabled={testRule.isPending}
+   607→                        onClick={() => testSavedRule(r)}
+   608→                        aria-label={`Test-fire rule ${r.metric} on ${r.serviceKey}`}
+   609→                      >
+   610→                        <FlaskConical className={cn('h-3 w-3', testRule.isPending && 'animate-pulse')} />
+   611→                        Test
+   612→                      </Button>
+   613→                    </td>
+   614→                  </tr>
+   615→                ))}
+   616→              </tbody>
+   617→            </table>
+   618→            <div className="border-t bg-muted/20 px-4 py-2 text-[10px] text-muted-foreground">
+   619→              Test evaluates the rule read-only - gateway metrics against live telemetry, <span className="font-medium text-foreground/70">slo.*</span> rules against the newest SLA report. If it would fire, you can register a DRILL incident from the toast to rehearse ack/mitigate/resolve.
+   620→            </div>
+   621→          </div>
+   622→        </TabsContent>
+   623→
+   624→        <TabsContent value="activity" className="mt-3">
+   625→          <div className="card-surface">
+   626→            <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2.5">
+   627→              <History className="h-3.5 w-3.5 text-muted-foreground" />
+   628→              <span className="text-[12px] font-medium">Audit trail</span>
+   629→              <span className="text-[10px] text-muted-foreground">
+   630→                every lifecycle + assignment event across the register
+   631→              </span>
+   632→              <Select value={activityEvent} onValueChange={(v) => setActivityEvent(v === '__all' ? '' : v)}>
+   633→                <SelectTrigger className="ml-auto h-7 w-40 text-[11px]"><SelectValue placeholder="All events" /></SelectTrigger>
+   634→                <SelectContent>
+   635→                  <SelectItem value="__all" className="text-xs">all events</SelectItem>
+   636→                  {['triggered', 'acknowledged', 'mitigated', 'resolved', 'assignment'].map((e) => (
+   637→                    <SelectItem key={e} value={e} className="text-xs capitalize">{e}</SelectItem>
+   638→                  ))}
+   639→                </SelectContent>
+   640→              </Select>
+   641→            </div>
+   642→            <div className="scroll-thin max-h-[560px] overflow-y-auto">
+   643→              {activity.isLoading && !activity.data ? (
+   644→                <div className="space-y-2 p-4">
+   645→                  {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-9" />)}
+   646→                </div>
+   647→              ) : activity.data && activity.data.events.length > 0 ? (
+   648→                <ol className="relative px-5 py-4">
+   649→                  {activity.data.events.map((e, idx) => {
+   650→                    const tone = EVENT_TONE[e.event] ?? 'neutral'
+   651→                    return (
+   652→                      <li
+   653→                        key={`${e.incidentId}-${e.ts}-${idx}`}
+   654→                        className="relative flex items-start gap-3 pb-3.5 last:pb-0"
+   655→                      >
+   656→                        {idx < activity.data!.events.length - 1 && (
+   657→                          <span className="absolute left-[7px] top-5 h-full w-px bg-border" aria-hidden />
+   658→                        )}
+   659→                        <span
+   660→                          className="mt-1 h-[15px] w-[15px] shrink-0 rounded-full border-2 border-background"
+   661→                          style={{ background: TONE_COLOR[tone] }}
+   662→                          aria-hidden
+   663→                        />
+   664→                        <button
+   665→                          type="button"
+   666→                          onClick={() => jumpToIncident(e.incidentId)}
+   667→                          title="Open this incident in the register"
+   668→                          className="group min-w-0 flex-1 cursor-pointer rounded-lg border bg-card/40 px-3 py-2 text-left transition-colors hover:border-ring/50 hover:bg-accent/20"
+   669→                        >
+   670→                          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+   671→                            <span className="text-[11px] font-semibold capitalize" style={{ color: TONE_COLOR[tone] }}>
+   672→                              {e.event}
+   673→                            </span>
+   674→                            <span className="font-mono text-[10px] text-muted-foreground">{e.serviceKey}</span>
+   675→                            <span className="text-[10px] text-muted-foreground">{e.incidentTitle}</span>
+   676→                            <span className="ml-auto flex shrink-0 items-center gap-1.5">
+   677→                              <span className="flex items-center gap-0.5 text-[10px] text-primary opacity-0 transition-opacity group-hover:opacity-100">
+   678→                                <Crosshair className="h-2.5 w-2.5" /> open
+   679→                              </span>
+   680→                              <span className="text-[10px] tabular text-muted-foreground">{timeAgo(e.ts)}</span>
+   681→                            </span>
+   682→                          </div>
+   683→                          <div className="mt-0.5 text-[11px] text-muted-foreground">{e.detail}</div>
+   684→                        </button>
+   685→                      </li>
+   686→                    )
+   687→                  })}
+   688→                </ol>
+   689→              ) : (
+   690→                <EmptyState title="No activity yet" hint="acknowledge, mitigate or assign an incident to start the trail" />
+   691→              )}
+   692→              {activity.data && (
+   693→                <div className="border-t px-4 py-2 text-[10px] text-muted-foreground">
+   694→                  showing {activity.data.events.length} of {activity.data.total} events · newest first · refreshes every 15s
+   695→                </div>
+   696→              )}
+   697→            </div>
+   698→          </div>
+   699→        </TabsContent>
+   700→      </Tabs>
+   701→    </div>
+   702→  )
+   703→}
+   704→
+   705→function StatCard({ icon, label, value, filteredValue, tone }: { icon: React.ReactNode; label: string; value: number; filteredValue?: number; tone: 'ok' | 'warn' | 'crit' | 'neutral' }) {
+   706→  const filtering = typeof filteredValue === 'number'
+   707→  return (
+   708→    <div
+   709→      className={cn('card-surface flex items-center gap-3 p-4 transition-colors', filtering && filteredValue === 0 && 'opacity-55')}
+   710→      title={filtering ? `${filteredValue} of ${value} match the active filter` : undefined}
+   711→    >
+   712→      <span className="flex h-8 w-8 items-center justify-center rounded-lg border" style={{ color: TONE_COLOR[tone] }}>
+   713→        {icon}
+   714→      </span>
+   715→      <div>
+   716→        <div className="text-lg font-semibold tabular leading-none">
+   717→          {filtering ? filteredValue : value}
+   718→          {filtering && (
+   719→            <span className="ml-1.5 text-[11px] font-normal text-muted-foreground tabular">/ {value}</span>
+   720→          )}
+   721→        </div>
+   722→        <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+   723→          {label}{filtering && ' · filtered'}
+   724→        </div>
+   725→      </div>
+   726→    </div>
+   727→  )
+   728→}
+   729→
+   730→function NewRuleDialog() {
+   731→  const create = useCreateRule()
+   732→  const testRule = useTestRule()
+   733→  const [open, setOpen] = useState(false)
+   734→  const [preview, setPreview] = useState<RuleEvaluation | null>(null)
+   735→  const [form, setForm] = useState({
+   736→    serviceKey: 'api-gateway',
+   737→    metric: 'latency.p99',
+   738→    comparator: 'above',
+   739→    threshold: '250',
+   740→    windowMinutes: '5',
+   741→    severity: 'warning',
+   742→  })
+   743→
+   744→  const clearPreview = () => setPreview(null)
+   745→
+   746→  const isSlo = form.metric.startsWith('slo.')
+   747→
+   748→  /** Sensible defaults when switching between gateway and SLO metrics. */
+   749→  const setMetric = (metric: string) => {
+   750→    setForm((f) => ({
+   751→      ...f,
+   752→      metric,
+   753→      comparator: metric === 'slo.availability' ? 'below' : metric === 'slo.burn_rate' ? 'above' : f.comparator,
+   754→      threshold: metric === 'slo.burn_rate' ? '2' : metric === 'slo.availability' ? '99.9' : f.threshold,
+   755→    }))
+   756→    clearPreview()
+   757→  }
+   758→
+   759→  const runPreview = () => {
+   760→    testRule.mutate(
+   761→      {
+   762→        serviceKey: form.serviceKey,
+   763→        metric: form.metric,
+   764→        comparator: form.comparator,
+   765→        threshold: Number(form.threshold),
+   766→        windowMinutes: Number(form.windowMinutes) || 5,
+   767→        severity: form.severity,
+   768→      },
+   769→      {
+   770→        onSuccess: (result) => setPreview(result.evaluation),
+   771→        onError: (e: Error) => toast.error('Evaluation failed', { description: e.message }),
+   772→      },
+   773→    )
+   774→  }
+   775→
+   776→  const submit = () => {
+   777→    create.mutate(
+   778→      {
+   779→        serviceKey: form.serviceKey,
+   780→        metric: form.metric,
+   781→        comparator: form.comparator,
+   782→        threshold: Number(form.threshold),
+   783→        windowMinutes: Number(form.windowMinutes),
+   784→        severity: form.severity,
+   785→      },
+   786→      {
+   787→        onSuccess: () => {
+   788→          toast.success('Rule armed', { description: `${form.metric} ${form.comparator} ${form.threshold} on ${form.serviceKey}` })
+   789→          setOpen(false)
+   790→          setPreview(null)
+   791→        },
+   792→        onError: (e: Error) => toast.error('Rejected', { description: e.message }),
+   793→      },
+   794→    )
+   795→  }
+   796→
+   797→  return (
+   798→    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setPreview(null) }}>
+   799→      <DialogTrigger asChild>
+   800→        <Button size="sm" className="h-8 gap-1.5 text-xs">
+   801→          <Plus className="h-3.5 w-3.5" /> New rule
+   802→        </Button>
+   803→      </DialogTrigger>
+   804→      <DialogContent className="sm:max-w-md">
+   805→        <DialogHeader>
+   806→          <DialogTitle className="text-base">Arm an alert rule</DialogTitle>
+   807→        </DialogHeader>
+   808→        <div className="grid gap-3 py-2">
+   809→          <Labeled label="Service">
+   810→            <Select value={form.serviceKey} onValueChange={(v) => { clearPreview(); setForm({ ...form, serviceKey: v }) }}>
+   811→              <SelectTrigger className="h-8 font-mono text-xs"><SelectValue /></SelectTrigger>
+   812→              <SelectContent>
+   813→                {['api-gateway', 'checkout-service', 'auth-service', 'search-cluster', 'billing-worker', 'edge-cdn'].map((s) => (
+   814→                  <SelectItem key={s} value={s} className="font-mono text-xs">{s}</SelectItem>
+   815→                ))}
+   816→              </SelectContent>
+   817→            </Select>
+   818→          </Labeled>
+   819→          <div className="grid grid-cols-3 gap-2">
+   820→            <Labeled label="Metric">
+   821→              <Select value={form.metric} onValueChange={setMetric}>
+   822→                <SelectTrigger className="h-8 font-mono text-xs"><SelectValue /></SelectTrigger>
+   823→                <SelectContent>
+   824→                  <SelectGroup>
+   825→                    <SelectLabel className="text-[9px] uppercase tracking-wider text-muted-foreground">Gateway telemetry</SelectLabel>
+   826→                    {['error.rate', 'latency.p99', 'latency.p95', 'request.rate', 'cpu.usage'].map((m) => (
+   827→                      <SelectItem key={m} value={m} className="font-mono text-xs">{m}</SelectItem>
+   828→                    ))}
+   829→                  </SelectGroup>
+   830→                  <SelectGroup>
+   831→                    <SelectLabel className="text-[9px] uppercase tracking-wider text-muted-foreground">SLO · reporting plane</SelectLabel>
+   832→                    <SelectItem value="slo.burn_rate" className="font-mono text-xs">slo.burn_rate</SelectItem>
+   833→                    <SelectItem value="slo.availability" className="font-mono text-xs">slo.availability</SelectItem>
+   834→                  </SelectGroup>
+   835→                </SelectContent>
+   836→              </Select>
+   837→            </Labeled>
+   838→            <Labeled label="Comparator">
+   839→              <Select value={form.comparator} onValueChange={(v) => { clearPreview(); setForm({ ...form, comparator: v }) }}>
+   840→                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+   841→                <SelectContent>
+   842→                  <SelectItem value="above">above</SelectItem>
+   843→                  <SelectItem value="below">below</SelectItem>
+   844→                </SelectContent>
+   845→              </Select>
+   846→            </Labeled>
+   847→            <Labeled label="Threshold">
+   848→              <Input className="h-8 text-xs tabular" value={form.threshold} onChange={(e) => { clearPreview(); setForm({ ...form, threshold: e.target.value }) }} inputMode="decimal" />
+   849→            </Labeled>
+   850→          </div>
+   851→          <div className="grid grid-cols-2 gap-2">
+   852→            <Labeled label={isSlo ? 'Window (report-defined)' : 'Window (minutes)'}>
+   853→              <Input
+   854→                className="h-8 text-xs tabular disabled:opacity-60"
+   855→                value={form.windowMinutes}
+   856→                onChange={(e) => { clearPreview(); setForm({ ...form, windowMinutes: e.target.value }) }}
+   857→                inputMode="numeric"
+   858→                disabled={isSlo}
+   859→                placeholder={isSlo ? 'latest report' : undefined}
+   860→              />
+   861→            </Labeled>
+   862→            <Labeled label="Severity">
+   863→              <Select value={form.severity} onValueChange={(v) => { clearPreview(); setForm({ ...form, severity: v }) }}>
+   864→                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+   865→                <SelectContent>
+   866→                  {['info', 'warning', 'critical'].map((s) => (
+   867→                    <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>
+   868→                  ))}
+   869→                </SelectContent>
+   870→              </Select>
+   871→            </Labeled>
+   872→          </div>
+   873→
+   874→          {isSlo && (
+   875→            <div className="flex items-start gap-2 rounded-lg border border-violet-500/30 bg-violet-500/5 px-2.5 py-2 text-[10px] leading-relaxed text-muted-foreground">
+   876→              <Gauge className="mt-0.5 h-3 w-3 shrink-0 text-violet-500" />
+   877→              <span>
+   878→                Report-backed rule: evaluated against the <b className="text-foreground/80">newest SLA report</b> from the reporting plane for the chosen service - no gateway window applies. burn_rate ≥ 1 means the error budget is being consumed at or above target pace.
+   879→              </span>
+   880→            </div>
+   881→          )}
+   882→
+   883→          {/* Live dry-run against gateway telemetry before arming */}
+   884→          <div className="rounded-lg border bg-muted/20 p-2.5">
+   885→            <div className="flex items-center justify-between gap-2">
+   886→              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Dry-run preview</span>
+   887→              <Button size="sm" variant="outline" className="h-6 gap-1 px-2 text-[10px]" disabled={testRule.isPending || !form.threshold} onClick={runPreview}>
+   888→                <FlaskConical className={cn('h-3 w-3', testRule.isPending && 'animate-pulse')} />
+   889→                {testRule.isPending ? 'Evaluating…' : 'Evaluate now'}
+   890→              </Button>
+   891→            </div>
+   892→            {preview && (
+   893→              <div className="mt-2 space-y-1">
+   894→                <div className="flex items-center gap-2 text-[11px]">
+   895→                  {preview.evaluable ? (
+   896→                    <span
+   897→                      className="rounded px-1.5 py-px font-semibold"
+   898→                      style={{
+   899→                        background: preview.wouldFire ? TONE_COLOR.crit : TONE_COLOR.ok,
+   900→                        color: 'white',
+   901→                      }}
+   902→                    >
+   903→                      {preview.wouldFire ? 'WOULD FIRE' : 'quiet'}
+   904→                    </span>
+   905→                  ) : (
+   906→                    <span className="rounded bg-muted px-1.5 py-px font-semibold text-muted-foreground">no data</span>
+   907→                  )}
+   908→                  {preview.evaluable && (
+   909→                    <span className="tabular">
+   910→                      current <b>{preview.currentValue}</b> vs {preview.comparator} {preview.threshold}
+   911→                    </span>
+   912→                  )}
+   913→                </div>
+   914→                <div className="text-[10px] text-muted-foreground">{preview.reason}</div>
+   915→              </div>
+   916→            )}
+   917→            {!preview && (
+   918→              <p className="mt-1.5 text-[10px] text-muted-foreground">
+   919→                {isSlo
+   920→                  ? 'Evaluates the condition against the newest SLA report without arming anything.'
+   921→                  : 'Evaluates the condition against live gateway telemetry without arming anything.'}
+   922→              </p>
+   923→            )}
+   924→          </div>
+   925→        </div>
+   926→        <DialogFooter>
+   927→          <Button size="sm" className="h-8 text-xs" onClick={submit} disabled={create.isPending}>
+   928→            {create.isPending ? 'Arming…' : 'Arm rule'}
+   929→          </Button>
+   930→        </DialogFooter>
+   931→      </DialogContent>
+   932→    </Dialog>
+   933→  )
+   934→}
+   935→
+   936→function Labeled({ label, children }: { label: string; children: React.ReactNode }) {
+   937→  return (
+   938→    <div className="space-y-1">
+   939→      <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</span>
+   940→      {children}
+   941→    </div>
+   942→  )
+   943→}
+   944→
