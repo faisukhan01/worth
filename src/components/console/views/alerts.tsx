@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { useAlerts, useIncidentAction, useCreateRule, useTestRule, useBulkIncidentAction, useAssignIncident, useSettings, useActivity, type OpenIncident } from '@/hooks/use-console-data'
+import { useAlerts, useIncidentAction, useCreateRule, useTestRule, useBulkIncidentAction, useAssignIncident, useSettings, useActivity, useSweepStatus, useRunSweep, useToggleRule, usePostmortem, useDraftPostmortem, type OpenIncident, type SweepRuleResult } from '@/hooks/use-console-data'
 import { StatusPill, EmptyState, TONE_COLOR, statusTone, SectionHeader } from '@/components/console/primitives'
+import { MarkdownLite } from '@/components/console/markdown-lite'
 import { timeAgo } from '@/lib/format'
 import { useIncidentFilterPresets, type IncidentFilterPreset } from '@/lib/incident-filter-store'
 import { cn } from '@/lib/utils'
@@ -14,7 +15,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrig
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from 'sonner'
-import { BellRing, Crosshair, FlaskConical, Gauge, Plus, ShieldCheck, Siren, Timer, UserPlus, Filter, Pin, PinOff, History } from 'lucide-react'
+import { BellRing, Copy, Crosshair, Download, FlaskConical, Gauge, Plus, Radar, RefreshCw, ShieldCheck, Siren, Sparkles, Timer, UserPlus, Filter, Pin, PinOff, History } from 'lucide-react'
 
 interface TimelineEntry {
   ts: string
@@ -51,6 +52,17 @@ const EVENT_TONE: Record<string, 'ok' | 'warn' | 'crit' | 'neutral'> = {
   mitigated: 'neutral',
   resolved: 'ok',
   assignment: 'neutral',
+  postmortem: 'neutral',
+  'auto-resolved': 'ok',
+}
+
+const VERDICT_STYLE: Record<SweepRuleResult['action'], string> = {
+  fired: 'border-crit/40 bg-crit/10 text-crit',
+  deduped: 'border-warn/40 bg-warn/10 text-warn',
+  'auto-resolved': 'border-ok/40 bg-ok/10 text-ok',
+  quiet: 'border-border bg-muted/30 text-muted-foreground',
+  'not-evaluable': 'border-border bg-muted/30 text-muted-foreground',
+  error: 'border-crit/40 bg-crit/10 text-crit',
 }
 
 export function AlertsView() {
@@ -60,6 +72,9 @@ export function AlertsView() {
   const testRule = useTestRule()
   const bulk = useBulkIncidentAction()
   const assignIncident = useAssignIncident()
+  const sweepStatus = useSweepStatus()
+  const runSweep = useRunSweep()
+  const toggleRule = useToggleRule()
   const [selected, setSelected] = useState<OpenIncident | null>(null)
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [assignPick, setAssignPick] = useState('')
@@ -537,7 +552,7 @@ export function AlertsView() {
                         <li key={idx} className="relative">
                           <span
                             className="absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full border-2 border-background"
-                            style={{ background: TONE_COLOR[statusTone(t.event)] }}
+                            style={{ background: TONE_COLOR[EVENT_TONE[t.event] ?? statusTone(t.event)] }}
                           />
                           <div className="flex items-center gap-2 text-[11px]">
                             <span className="font-medium capitalize">{t.event}</span>
@@ -547,6 +562,7 @@ export function AlertsView() {
                         </li>
                       ))}
                     </ol>
+                    <PostmortemSection incidentId={i.id} serviceKey={i.serviceKey} />
                   </div>
                 )}
               </div>
@@ -561,6 +577,55 @@ export function AlertsView() {
 
         <TabsContent value="rules" className="mt-3">
           <div className="card-surface overflow-hidden">
+            {/* Background evaluator status strip */}
+            <div className="flex flex-wrap items-center gap-2 border-b bg-muted/10 px-4 py-2 text-[11px]">
+              <span className="relative flex h-2 w-2" aria-hidden>
+                <span
+                  className={cn(
+                    'absolute inline-flex h-full w-full animate-ping rounded-full opacity-50',
+                    sweepStatus.data?.inProgress ? 'bg-primary' : 'bg-ok',
+                  )}
+                />
+                <span
+                  className={cn(
+                    'relative inline-flex h-2 w-2 rounded-full',
+                    sweepStatus.data?.inProgress ? 'bg-primary' : 'bg-ok',
+                  )}
+                />
+              </span>
+              <span className="flex items-center gap-1 font-medium">
+                <Radar className="h-3 w-3 text-muted-foreground" /> Auto-evaluator
+              </span>
+              {sweepStatus.data?.last ? (
+                <span className="text-muted-foreground" title={`sweep took ${sweepStatus.data.last.durationMs}ms`}>
+                  swept {timeAgo(sweepStatus.data.last.at)} · {sweepStatus.data.last.checked} rules ·
+                  {' '}<span className="text-crit">fired {sweepStatus.data.last.fired}</span>
+                  {' '}· <span className="text-ok">auto-resolved {sweepStatus.data.last.autoResolved}</span>
+                  {sweepStatus.data.last.deduped > 0 && ` · deduped ${sweepStatus.data.last.deduped}`}
+                  {sweepStatus.data.last.errors > 0 && <span className="text-crit"> · {sweepStatus.data.last.errors} error(s)</span>}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">first sweep pending…</span>
+              )}
+              <Button
+                size="sm"
+                variant="ghost"
+                className="ml-auto h-6 gap-1 px-2 text-[10px]"
+                disabled={runSweep.isPending || sweepStatus.data?.inProgress}
+                onClick={() =>
+                  runSweep.mutate(undefined, {
+                    onSuccess: (s) =>
+                      toast.success(`Sweep complete · ${s.checked} rule(s)`, {
+                        description: `${s.fired} fired · ${s.autoResolved} auto-resolved · ${s.deduped} deduped · ${s.notEvaluable} not evaluable`,
+                      }),
+                    onError: (e: Error) => toast.error('Sweep failed', { description: e.message }),
+                  })
+                }
+              >
+                <RefreshCw className={cn('h-3 w-3', (runSweep.isPending || sweepStatus.data?.inProgress) && 'animate-spin')} />
+                Sweep now
+              </Button>
+            </div>
             <table className="w-full text-[12px]">
               <thead>
                 <tr className="border-b bg-muted/30 text-left text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -594,9 +659,50 @@ export function AlertsView() {
                       <StatusPill status={r.severity} />
                     </td>
                     <td className="px-3 py-2.5">
-                      <span className={r.enabled ? 'text-[11px] text-ok' : 'text-[11px] text-muted-foreground'}>
-                        {r.enabled ? 'armed' : 'muted'}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <button
+                          className={cn(
+                            'rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors disabled:opacity-60',
+                            r.enabled
+                              ? 'border-ok/40 bg-ok/10 text-ok hover:bg-ok/20'
+                              : 'border-muted-foreground/30 bg-muted/30 text-muted-foreground hover:text-foreground',
+                          )}
+                          disabled={toggleRule.isPending}
+                          aria-label={`${r.enabled ? 'Mute' : 'Arm'} rule ${r.metric} on ${r.serviceKey}`}
+                          title={r.enabled ? 'Armed - the auto-evaluator fires incidents on breach. Click to mute.' : 'Muted - skipped by the auto-evaluator. Click to arm.'}
+                          onClick={() =>
+                            toggleRule.mutate(
+                              { id: r.id, enabled: !r.enabled },
+                              {
+                                onSuccess: () =>
+                                  toast.success(r.enabled ? 'Rule muted' : 'Rule armed', {
+                                    description: r.enabled
+                                      ? 'The evaluator skips this rule; its untouched auto-fired incident is closed.'
+                                      : 'Breaches will register incidents within a minute.',
+                                  }),
+                                onError: (e: Error) => toast.error('Toggle failed', { description: e.message }),
+                              },
+                            )
+                          }
+                        >
+                          {r.enabled ? '● armed' : '○ muted'}
+                        </button>
+                        {(() => {
+                          const verdict = sweepStatus.data?.last?.results.find((res) => res.ruleId === r.id)
+                          if (!verdict) return null
+                          return (
+                            <span
+                              title={`${verdict.reason}${verdict.currentValue != null ? ` · current ${verdict.currentValue}` : ''}`}
+                              className={cn(
+                                'rounded border px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider',
+                                VERDICT_STYLE[verdict.action],
+                              )}
+                            >
+                              {verdict.action === 'not-evaluable' ? 'no data' : verdict.action}
+                            </span>
+                          )
+                        })()}
+                      </div>
                     </td>
                     <td className="px-4 py-2.5 text-right">
                       <Button
@@ -616,7 +722,7 @@ export function AlertsView() {
               </tbody>
             </table>
             <div className="border-t bg-muted/20 px-4 py-2 text-[10px] text-muted-foreground">
-              Test evaluates the rule read-only - gateway metrics against live telemetry, <span className="font-medium text-foreground/70">slo.*</span> rules against the newest SLA report. If it would fire, you can register a DRILL incident from the toast to rehearse ack/mitigate/resolve.
+              Armed rules are evaluated <span className="font-medium text-foreground/70">every minute in the background</span> - breaches register real incidents (tagged <span className="font-medium text-foreground/70">rule</span>), cleared conditions auto-resolve untouched ones. Test evaluates read-only: gateway metrics against live telemetry, <span className="font-medium text-foreground/70">slo.*</span> rules against the newest SLA report. If it would fire, you can register a DRILL incident from the toast to rehearse ack/mitigate/resolve.
             </div>
           </div>
         </TabsContent>
@@ -801,7 +907,7 @@ function NewRuleDialog() {
           <Plus className="h-3.5 w-3.5" /> New rule
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent aria-describedby={undefined} className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="text-base">Arm an alert rule</DialogTitle>
         </DialogHeader>
@@ -938,6 +1044,91 @@ function Labeled({ label, children }: { label: string; children: React.ReactNode
     <div className="space-y-1">
       <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</span>
       {children}
+    </div>
+  )
+}
+
+/** AI-drafted postmortem: generate from the timeline, view, copy, download. */
+function PostmortemSection({ incidentId, serviceKey }: { incidentId: string; serviceKey: string }) {
+  const pm = usePostmortem(incidentId)
+  const draft = useDraftPostmortem()
+  const [open, setOpen] = useState(false)
+  const markdown = pm.data?.postmortem ?? null
+
+  const generate = () =>
+    draft.mutate(incidentId, {
+      onSuccess: () => {
+        setOpen(true)
+        toast.success('Postmortem drafted', {
+          description: 'AI draft generated from the timeline - review before sharing.',
+        })
+      },
+      onError: (e: Error) => toast.error('Draft failed', { description: e.message }),
+    })
+
+  const copy = () => {
+    if (!markdown) return
+    void navigator.clipboard.writeText(markdown).then(() => toast.success('Markdown copied to clipboard'))
+  }
+
+  const download = () => {
+    if (!markdown) return
+    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `postmortem-${serviceKey}-${incidentId.slice(0, 8)}.md`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  return (
+    <div className="mt-4 rounded-lg border bg-card/40">
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2">
+        <Sparkles className="h-3.5 w-3.5 text-violet-500" />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Postmortem</span>
+        {markdown && !open && <span className="text-[10px] text-muted-foreground">draft stored on the incident</span>}
+        <div className="ml-auto flex items-center gap-1.5">
+          {markdown && !open && (
+            <Button size="sm" variant="outline" className="h-6 px-2 text-[10px]" onClick={() => setOpen(true)}>
+              View draft
+            </Button>
+          )}
+          {markdown && open && (
+            <>
+              <Button size="sm" variant="ghost" className="h-6 gap-1 px-2 text-[10px]" onClick={copy} aria-label="Copy postmortem markdown">
+                <Copy className="h-3 w-3" /> Copy
+              </Button>
+              <Button size="sm" variant="ghost" className="h-6 gap-1 px-2 text-[10px]" onClick={download} aria-label="Download postmortem as markdown file">
+                <Download className="h-3 w-3" /> .md
+              </Button>
+            </>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-6 gap-1 px-2 text-[10px]"
+            disabled={draft.isPending}
+            onClick={generate}
+            aria-label={markdown ? 'Regenerate AI postmortem' : 'Draft postmortem with AI'}
+          >
+            <Sparkles className={cn('h-3 w-3 text-violet-500', draft.isPending && 'animate-pulse')} />
+            {draft.isPending ? 'Drafting…' : markdown ? 'Regenerate' : 'Draft with AI'}
+          </Button>
+        </div>
+      </div>
+      {open && markdown && (
+        <div className="border-t px-4 py-3">
+          <div className="scroll-thin max-h-96 overflow-y-auto pr-1">
+            <MarkdownLite source={markdown} />
+          </div>
+        </div>
+      )}
+      {!markdown && (
+        <p className="px-3 pb-2.5 text-[10px] leading-relaxed text-muted-foreground">
+          One click drafts a reviewable postmortem from this timeline, service context and the newest SLA report - stored on the incident and auditable in the trail.
+        </p>
+      )}
     </div>
   )
 }

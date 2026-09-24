@@ -1,178 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { gateway, reporting } from '@/lib/upstream'
+import { evaluateRule, SLO_METRICS, COMPARATORS, SEVERITIES, METRIC_RE, type Evaluation, type RuleShape } from '@/lib/rule-evaluator'
 
 export const dynamic = 'force-dynamic'
-
-const COMPARATORS = new Set(['above', 'below'])
-const SEVERITIES = new Set(['critical', 'warning', 'info'])
-const METRIC_RE = /^[a-z][a-z0-9._]{1,64}$/
-
-/** Report-backed metrics: evaluated against the newest SLA report, not the gateway. */
-const SLO_METRICS = new Set(['slo.burn_rate', 'slo.availability'])
-
-interface Evaluation {
-  serviceKey: string
-  metric: string
-  comparator: string
-  threshold: number
-  windowMinutes: number
-  severity: string
-  currentValue: number | null
-  sampleCount: number
-  evaluable: boolean
-  wouldFire: boolean
-  reason: string
-  evaluatedAt: string
-  /** Present when the rule is report-backed (metric slo.*). */
-  reportId?: string
-  reportFrom?: string
-  reportTo?: string
-  sloTarget?: number
-}
-
-/**
- * Average of the freshest points in a series. Uses up to the last 3 samples so
- * a single noisy point does not flip the verdict, but still reflects "now".
- */
-function latestValue(points: { ts: number; value: number }[]): { value: number; count: number } | null {
-  if (points.length === 0) return null
-  const tail = points.slice(-3)
-  const value = tail.reduce((s, p) => s + p.value, 0) / tail.length
-  return { value, count: tail.length }
-}
-
-/**
- * Snap a rule window to a range the gateway accepts. Gateway only allows
- * {5m,15m,30m,1h,3h,6h,24h}, so e.g. a 10m rule evaluates on 15m of data.
- */
-function snapRange(windowMinutes: number): string {
-  const allowed: [number, string][] = [
-    [5, '5m'], [15, '15m'], [30, '30m'], [60, '1h'], [180, '3h'], [360, '6h'], [1440, '24h'],
-  ]
-  for (const [minutes, range] of allowed) {
-    if (windowMinutes <= minutes) return range
-  }
-  return '24h'
-}
-
-async function evaluate(rule: {
-  serviceKey: string
-  metric: string
-  comparator: string
-  threshold: number
-  windowMinutes: number
-  severity: string
-}): Promise<Evaluation> {
-  const evaluatedAt = new Date().toISOString()
-  let series: { points: { ts: number; value: number }[] }[] = []
-  try {
-    const res = await gateway.metrics(rule.metric, snapRange(rule.windowMinutes), 12, { service: rule.serviceKey })
-    series = res.series ?? []
-  } catch {
-    return {
-      ...rule,
-      currentValue: null,
-      sampleCount: 0,
-      evaluable: false,
-      wouldFire: false,
-      reason: 'gateway unreachable or metric stream unavailable',
-      evaluatedAt,
-    }
-  }
-
-  let match = series.find((s) => s.tags?.service === rule.serviceKey) ?? series[0]
-  let scope: string = rule.serviceKey
-  // Host metrics (cpu.usage, mem.used, ...) are emitted by the C pulseagent
-  // without a service tag. If the service-scoped query came back empty, fall
-  // back to the real agent feed so host rules stay evaluable.
-  if (!match || (match.points ?? []).length === 0) {
-    try {
-      const res = await gateway.metrics(rule.metric, snapRange(rule.windowMinutes), 12)
-      const agentSeries = (res.series ?? []).filter((s) => s.tags?.source !== 'simulated')
-      if (agentSeries.length > 0) {
-        match = agentSeries[0]
-        scope = 'host telemetry'
-      }
-    } catch {
-      // keep the service-scoped result below
-    }
-  }
-  const sample = match ? latestValue(match.points ?? []) : null
-  if (!sample) {
-    return {
-      ...rule,
-      currentValue: null,
-      sampleCount: 0,
-      evaluable: false,
-      wouldFire: false,
-      reason: `no samples for ${scope}/${rule.metric} in the last ${rule.windowMinutes}m`,
-      evaluatedAt,
-    }
-  }
-
-  const wouldFire = rule.comparator === 'above' ? sample.value > rule.threshold : sample.value < rule.threshold
-  return {
-    ...rule,
-    currentValue: Math.round(sample.value * 1000) / 1000,
-    sampleCount: sample.count,
-    evaluable: true,
-    wouldFire,
-    reason: wouldFire
-      ? `${rule.comparator} ${rule.threshold} breached (avg of last ${sample.count} samples)`
-      : `${rule.comparator} ${rule.threshold} not breached (avg of last ${sample.count} samples)`,
-    evaluatedAt,
-  }
-}
-
-/**
- * Report-backed evaluation: reads the newest SLA report the C# plane has for
- * the service, so burn-rate / availability rules alert on SLO health instead
- * of raw gateway series. No window applies - the report carries its own.
- */
-async function evaluateSlo(rule: {
-  serviceKey: string
-  metric: string
-  comparator: string
-  threshold: number
-  windowMinutes: number
-  severity: string
-}): Promise<Evaluation> {
-  const evaluatedAt = new Date().toISOString()
-  const data = await reporting.reports(rule.serviceKey, 10)
-  const latest = (data?.reports ?? [])
-    .slice()
-    .sort((a, b) => (a.to < b.to ? 1 : a.to > b.to ? -1 : 0))[0]
-  if (!latest) {
-    return {
-      ...rule,
-      currentValue: null,
-      sampleCount: 0,
-      evaluable: false,
-      wouldFire: false,
-      reason: `no SLA report found for ${rule.serviceKey} - generate one from the Reports view`,
-      evaluatedAt,
-    }
-  }
-  const s = latest.summary
-  const currentValue = rule.metric === 'slo.burn_rate' ? s.burnRate : s.availabilityPct
-  const rounded = Math.round(currentValue * 1000) / 1000
-  const wouldFire = rule.comparator === 'above' ? currentValue > rule.threshold : currentValue < rule.threshold
-  const label = rule.metric === 'slo.burn_rate' ? 'burn rate' : 'availability'
-  return {
-    ...rule,
-    currentValue: rounded,
-    sampleCount: 1,
-    evaluable: true,
-    wouldFire,
-    reason: `${label} ${rounded} ${rule.comparator} ${rule.threshold} · report window ${latest.from.slice(0, 10)} → ${latest.to.slice(0, 10)} (SLO target ${latest.sloTarget}%)`,
-    reportId: latest.id,
-    reportFrom: latest.from,
-    reportTo: latest.to,
-    sloTarget: latest.sloTarget,
-    evaluatedAt,
-  }
-}
 
 /**
  * POST /api/alerts/rules/test
@@ -202,7 +32,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "mode must be 'evaluate' or 'drill'" }, { status: 400 })
   }
 
-  let rule: { serviceKey: string; metric: string; comparator: string; threshold: number; windowMinutes: number; severity: string }
+  let rule: RuleShape
   let ruleId: string | null = null
   let ruleLabel: string
 
@@ -244,7 +74,7 @@ export async function POST(req: NextRequest) {
     ruleLabel = `${metric} ${comparator} ${threshold} on ${serviceKey}`
   }
 
-  const evaluation = rule.metric.startsWith('slo.') ? await evaluateSlo(rule) : await evaluate(rule)
+  const evaluation: Evaluation = await evaluateRule(rule)
 
   if (mode === 'drill') {
     const dedupKey = `drill:${ruleId ?? `${rule.serviceKey}:${rule.metric}:${rule.comparator}:${rule.threshold}`}`

@@ -90,6 +90,7 @@ probe "GET /api/alerts"          '"rules"'           GET "$WEB/api/alerts"
 probe "GET /api/aiops"           '"anomalies"'       GET "$WEB/api/aiops"
 probe "GET /api/billing"         '"quotas"'          GET "$WEB/api/billing"
 probe "GET /api/reports"         '"reports"'         GET "$WEB/api/reports"
+probe "GET evaluator status"     '"inProgress"'      GET "$WEB/api/alerts/rules/evaluate-all"
 
 echo "gateway ingest round-trip:"
 ts=$(date +%s%3N)
@@ -108,6 +109,8 @@ if [ "$DEEP" -eq 1 ]; then
   warn_probe "POST sla report (C# write)" '"availabilityPct"' POST "$WEB/api/reports" \
     -H 'content-type: application/json' \
     -d '{"serviceId":"api-gateway","windowDays":7,"sloTarget":99.9}'
+  # Mutating but safe: breaches dedup on rule:<id>, quiet rules are untouched.
+  probe "POST evaluator sweep"    '"checked"'         POST "$WEB/api/alerts/rules/evaluate-all"
 fi
 
 echo "-----------------------------------------------------------------------"

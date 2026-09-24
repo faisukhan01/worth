@@ -54,6 +54,7 @@ model Incident {
   resolvedAt     DateTime?
   assignee       String?
   timeline       String    @default("[]") // JSON: [{ts, event, detail}]
+  postmortem     String? // AI-drafted postmortem markdown
 
   @@index([status, startedAt])
   @@index([dedupKey])

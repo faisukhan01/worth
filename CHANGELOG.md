@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - console iteration 10
+- **Background rule evaluator** - armed rules are now evaluated every minute
+  without human input. `src/lib/rule-evaluator.ts` is a single engine shared
+  by the test-fire route, an on-demand sweep (`POST
+  /api/alerts/rules/evaluate-all`) and the background loop
+  (`src/instrumentation.ts`, 60s cadence) with a sweep-on-read nudge in
+  `GET /api/alerts` so breaches keep flowing even without the hook. Breach
+  with no open incident -> real incident registered (`source=rule`, dedupKey
+  `rule:<id>`, observed value in the timeline); breach with open incident ->
+  deduped; cleared condition -> auto-resolve while still `triggered`.
+  The Rules tab gains an auto-evaluator status strip (pulsing liveness dot,
+  last-sweep summary, "Sweep now") and per-rule last-verdict chips
+  (fired / deduped / auto-resolved / quiet / no data) with reasons on hover.
+- **Rule arm/mute** - `PATCH /api/alerts/rules/:id` (`{enabled}`) plus a
+  toggle pill per rule row; muting also auto-resolves the rule's untouched
+  auto-fired incident (`rule muted by operator` timeline entry) so muted
+  rules leave no dangling alerts.
+- **AI postmortem drafts** - new `POST/GET /api/incidents/:id/postmortem`:
+  the LLM plane drafts a full postmortem (Summary, Impact, Timeline, Root
+  cause analysis with clearly labelled hypotheses, What went well / What to
+  improve, Action-item checklist) from the incident's live timeline, service
+  catalog context and the newest SLA report summary. The markdown is stored
+  on the incident (new `postmortem` column) with a `postmortem` timeline
+  event; the expanded incident card renders it (dependency-free markdown
+  renderer with task-checkbox support) alongside Copy / .md download /
+  Regenerate.
+- Ops: smoke.sh gains an evaluator-status probe (18 total) and a deep
+  sweep probe; api-contracts.md documents the evaluator, mute and
+  postmortem endpoints.
+
+### Fixed - iteration 10
+- Radix `DialogContent` missing-description a11y warning on the New-rule
+  dialog (`aria-describedby={undefined}`).
+- Postmortem reads/writes go through parameterized raw SQL for the new
+  column so the long-running dev server (Turbopack-cached Prisma client)
+  can use the feature before its next restart.
+
 ### Added - console iteration 7+8
 - **SLO burn-rate alert rules (Alerts)** - the rule evaluator accepts
   report-backed metrics `slo.burn_rate` / `slo.availability`: instead of

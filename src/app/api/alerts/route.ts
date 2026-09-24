@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { maybeSweep } from '@/lib/rule-evaluator'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,8 +11,12 @@ const METRIC_RE = /^[a-z][a-z0-9._]{1,64}$/
 /**
  * GET /api/alerts
  * Alert rules + incident register (open incidents first).
+ * Also nudges the background evaluator: if the last sweep is older than a
+ * minute, one is kicked off fire-and-forget so rule breaches keep flowing
+ * into the register even without the instrumentation hook.
  */
 export async function GET() {
+  maybeSweep()
   const [rules, incidents] = await Promise.all([
     db.alertRule.findMany({ orderBy: { createdAt: 'desc' } }),
     db.incident.findMany({ orderBy: { startedAt: 'desc' }, take: 40 }),

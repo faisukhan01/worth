@@ -501,3 +501,120 @@ export function useTestRule() {
     },
   })
 }
+
+// ---- background rule evaluator ---------------------------------------------
+
+export interface SweepRuleResult {
+  ruleId: string
+  serviceKey: string
+  metric: string
+  evaluable: boolean
+  wouldFire: boolean
+  currentValue: number | null
+  action: 'fired' | 'deduped' | 'auto-resolved' | 'quiet' | 'not-evaluable' | 'error'
+  reason: string
+  incidentId?: string
+}
+
+export interface SweepResult {
+  at: string
+  durationMs: number
+  checked: number
+  fired: number
+  deduped: number
+  autoResolved: number
+  quiet: number
+  notEvaluable: number
+  errors: number
+  results: SweepRuleResult[]
+}
+
+export interface SweepStatus {
+  last: SweepResult | null
+  inProgress: boolean
+}
+
+/** Poll the evaluator status (last sweep summary + live progress). */
+export function useSweepStatus() {
+  return useQuery({
+    queryKey: ['sweep'],
+    queryFn: () => getJson<SweepStatus>('/api/alerts/rules/evaluate-all'),
+    refetchInterval: SLOW,
+    placeholderData: (prev) => prev,
+  })
+}
+
+/** Trigger an evaluator sweep right now. */
+export function useRunSweep() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async () => {
+      const res = await fetch('/api/alerts/rules/evaluate-all', { method: 'POST' })
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string }
+        throw new Error(body.error ?? `request failed (${res.status})`)
+      }
+      return (await res.json()) as SweepResult
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['alerts'] })
+      void qc.invalidateQueries({ queryKey: ['sweep'] })
+      void qc.invalidateQueries({ queryKey: ['overview'] })
+    },
+  })
+}
+
+/** Arm or mute an alert rule (muted rules are skipped by the evaluator). */
+export function useToggleRule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
+      const res = await fetch(`/api/alerts/rules/${id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      })
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string }
+        throw new Error(body.error ?? `request failed (${res.status})`)
+      }
+      return res.json()
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['alerts'] })
+      void qc.invalidateQueries({ queryKey: ['sweep'] })
+    },
+  })
+}
+
+// ---- AI postmortem ----------------------------------------------------------
+
+/** Stored postmortem markdown for an incident (null = not drafted yet). */
+export function usePostmortem(incidentId: string | null) {
+  return useQuery({
+    queryKey: ['postmortem', incidentId],
+    queryFn: () => getJson<{ postmortem: string | null }>(`/api/incidents/${incidentId}/postmortem`),
+    enabled: Boolean(incidentId),
+    staleTime: 60_000,
+  })
+}
+
+/** (Re)generate the AI postmortem for an incident. */
+export function useDraftPostmortem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (incidentId: string) => {
+      const res = await fetch(`/api/incidents/${incidentId}/postmortem`, { method: 'POST' })
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string }
+        throw new Error(body.error ?? `request failed (${res.status})`)
+      }
+      return (await res.json()) as { postmortem: string }
+    },
+    onSuccess: (_data, incidentId) => {
+      void qc.invalidateQueries({ queryKey: ['postmortem', incidentId] })
+      void qc.invalidateQueries({ queryKey: ['alerts'] })
+      void qc.invalidateQueries({ queryKey: ['activity'] })
+    },
+  })
+}

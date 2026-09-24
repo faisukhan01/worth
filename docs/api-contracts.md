@@ -209,6 +209,45 @@ No gateway window applies - the report carries its own; the response adds
 `reportId` / `reportFrom` / `reportTo` / `sloTarget` to the evaluation.
 Services without a stored report evaluate to `evaluable: false`.
 
+### Background rule evaluator
+
+`src/lib/rule-evaluator.ts` is the single evaluation engine shared by the
+test-fire route and the background sweep. Three entry points:
+
+- `GET /api/alerts/rules/evaluate-all` - evaluator status:
+  `{ last: SweepResult | null, inProgress: boolean }`. `SweepResult` carries
+  `at`, `durationMs`, `checked/fired/deduped/autoResolved/quiet/notEvaluable/errors`
+  and per-rule `results[]` (`action: fired | deduped | auto-resolved | quiet |
+  not-evaluable | error`, `reason`, `incidentId?`).
+- `POST /api/alerts/rules/evaluate-all` - run a sweep now (concurrent calls
+  collapse into the in-progress sweep).
+- Background loop - `src/instrumentation.ts` starts a 60s interval at boot;
+  additionally every `GET /api/alerts` fires a sweep-on-read nudge when the
+  last sweep is older than a minute, so breaches still register in runtimes
+  where the instrumentation hook never booted.
+
+Sweep semantics: every **enabled** rule is evaluated; a breach with no open
+`rule:<id>` incident registers a real incident (`source=rule`, dedupKey
+`rule:<ruleId>`, timeline `triggered` with the observed value); a breach with
+an open incident counts as `deduped` (no spam); a cleared condition
+auto-resolves the rule's incident **only while it is still `triggered`**
+(acknowledged/mitigated incidents stay open for a human to close).
+
+### PATCH /api/alerts/rules/:id
+
+Body `{ enabled: boolean }` - arm/mute a rule. Muting also auto-resolves the
+rule's untouched (`triggered`) auto-fired incident with a `rule muted by
+operator` timeline entry.
+
+### POST/GET /api/incidents/:id/postmortem
+
+`GET` returns `{ postmortem: string | null }` - the stored AI-drafted
+markdown (null = not drafted). `POST` drafts one via the LLM plane from the
+incident's timeline (last 30 entries), service catalog context (tier, owner,
+SLO target) and the newest SLA report summary when one exists; the markdown
+is persisted on the incident and a `postmortem` timeline event is appended.
+The console renders it read-only with copy/download, or regenerate.
+
 ---
 
 ## Billing core (Java 17 / Spring Boot 3, port 4100) and Reporting (C# / .NET 8, port 4200)
