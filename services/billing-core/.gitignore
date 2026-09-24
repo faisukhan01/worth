@@ -1,0 +1,16 @@
+# Build output
+target/
+dependency-reduced-pom.xml
+
+# Embedded H2 database files (local dev state)
+data/
+*.db
+*.mv.db
+*.trace.db
+
+# IDE / OS noise
+.idea/
+*.iml
+.vscode/
+.DS_Store
+*.log
