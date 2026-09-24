@@ -1,0 +1,89 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Lodestar platform domain model (web tier).
+// Live telemetry lives in the Go ingest-gateway; this store keeps the
+// organisational entities: service catalog, alerting, incidents, team,
+// API keys and metered usage for billing.
+// ---------------------------------------------------------------------------
+
+model Service {
+  id        String   @id @default(cuid())
+  key       String   @unique // matches gateway tags.service, e.g. "checkout-service"
+  name      String
+  tier      String   @default("standard") // edge | critical | standard
+  owner     String
+  language  String   @default("go")
+  sloTarget Float    @default(99.9) // availability target %
+  createdAt DateTime @default(now())
+
+  @@index([tier])
+}
+
+model AlertRule {
+  id             String   @id @default(cuid())
+  serviceKey     String
+  metric         String // e.g. error.rate, latency.p99
+  comparator     String   @default("above") // above | below
+  threshold      Float
+  windowMinutes  Int      @default(5)
+  severity       String   @default("warning") // critical | warning | info
+  enabled        Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  @@index([serviceKey, enabled])
+}
+
+model Incident {
+  id             String    @id @default(cuid())
+  serviceKey     String
+  title          String
+  severity       String // critical | warning | info
+  status         String    @default("triggered") // triggered | acknowledged | mitigated | resolved
+  source         String    @default("aiops") // aiops | manual
+  startedAt      DateTime  @default(now())
+  acknowledgedAt DateTime?
+  resolvedAt     DateTime?
+  assignee       String?
+  timeline       String    @default("[]") // JSON: [{ts, event, detail}]
+
+  @@index([status, startedAt])
+}
+
+model TeamMember {
+  id     String @id @default(cuid())
+  name   String
+  email  String @unique
+  role   String // owner | sre | engineer | observer
+  hue    Int    @default(150) // avatar hue
+  onCall Boolean @default(false)
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  name       String
+  prefix     String @unique // display form, e.g. pg_live_a1b2
+  env        String    @default("production")
+  revoked    Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+}
+
+model UsageRecord {
+  id         String @id @default(cuid())
+  serviceKey String
+  day        String // yyyy-mm-dd
+  metricName String // ingested.events | ingested.gb | aiops.insights
+  quantity   Float
+  unit       String
+
+  @@index([serviceKey, day])
+  @@index([metricName, day])
+}
