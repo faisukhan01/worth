@@ -152,3 +152,4 @@ examples/
 tests/
 download/
 *.tgz
+mini-services/
