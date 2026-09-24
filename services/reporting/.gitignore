@@ -1,0 +1,14 @@
+# Build output
+bin/
+obj/
+publish/
+
+# Generated reports (local dev state)
+data/
+
+# IDE / OS noise
+.vs/
+.vscode/
+*.user
+.DS_Store
+*.log
