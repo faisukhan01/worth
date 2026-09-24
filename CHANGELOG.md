@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - console iteration 6
+- **Theme switching** - next-themes wired into the console (class strategy,
+  dark default, OS preference honoured); topbar sun/moon toggle with a
+  hydration-safe mount guard; per-theme `color-scheme` so form controls and
+  scrollbars follow; verified across all views in both modes.
+- **Alert rule test-fire + drills (Alerts)** - `POST /api/alerts/rules/test`
+  evaluates a saved (or unsaved) rule against live gateway telemetry with
+  gateway range-snapping and a host-metric fallback for agent feeds; the rules
+  table gains per-row Test buttons whose verdict toasts offer a one-click
+  "Fire drill" that registers a dedup'd DRILL incident for on-call rehearsal;
+  the new-rule dialog shows a live dry-run preview before arming.
+- **Auto-promotion (AIOps)** - persisted toggle in the anomaly feed; promotes
+  active CRITICAL anomalies into the incident register automatically,
+  rate-limited to one per 90s and dedup-aware so detection storms cannot flood
+  the register.
+
 ### Added - console iteration 5
 - **Error budgets panel (Overview)** - latest SLA report per service from the
   C# reporting plane: availability, remaining budget bar, burn rate; the host
