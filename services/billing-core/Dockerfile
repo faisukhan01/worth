@@ -1,7 +1,7 @@
 # Lodestar billing-core - multi-stage build.
 # Stage 1 builds the fat jar with Maven on Temurin 17; stage 2 ships a minimal JRE runtime.
 
-FROM maven:3.9-eclipse-temurin-17 AS build
+FROM maven:3-eclipse-temurin-26 AS build
 WORKDIR /build
 
 COPY pom.xml .
