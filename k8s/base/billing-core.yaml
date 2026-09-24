@@ -1,0 +1,140 @@
+# =============================================================================
+# billing-core (Java 17 / Spring Boot 3) - Deployment + Service + PVC.
+# H2 database files persist on the `billing-core-data` PVC mounted at /data.
+# NOTE: the /actuator/health probe assumes the billing service agent enables
+# Spring Boot actuator; adjust the path if a different health route is chosen.
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: billing-core-data
+  namespace: lodestar
+  labels:
+    app.kubernetes.io/name: billing-core
+    app.kubernetes.io/instance: lodestar
+    app.kubernetes.io/component: billing
+    app.kubernetes.io/part-of: lodestar
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billing-core
+  namespace: lodestar
+  labels:
+    app.kubernetes.io/name: billing-core
+    app.kubernetes.io/instance: lodestar
+    app.kubernetes.io/component: billing
+    app.kubernetes.io/part-of: lodestar
+    app.kubernetes.io/version: "0.1.0"
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: billing-core
+      app.kubernetes.io/instance: lodestar
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: billing-core
+        app.kubernetes.io/instance: lodestar
+        app.kubernetes.io/component: billing
+        app.kubernetes.io/part-of: lodestar
+        app.kubernetes.io/version: "0.1.0"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10003
+        runAsGroup: 10003
+        fsGroup: 10003
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: billing-core
+          image: ghcr.io/lodestar-oss/lodestar-billing:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 4100
+              protocol: TCP
+          env:
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: lodestar-config
+                  key: BILLING_PORT
+            - name: JAVA_OPTS
+              valueFrom:
+                configMapKeyRef:
+                  name: lodestar-config
+                  key: JAVA_OPTS
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:h2:file:/data/billing
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+            initialDelaySeconds: 40
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: billing-core-data
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: billing-core
+  namespace: lodestar
+  labels:
+    app.kubernetes.io/name: billing-core
+    app.kubernetes.io/instance: lodestar
+    app.kubernetes.io/component: billing
+    app.kubernetes.io/part-of: lodestar
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: billing-core
+    app.kubernetes.io/instance: lodestar
+  ports:
+    - name: http
+      port: 4100
+      targetPort: http
+      protocol: TCP

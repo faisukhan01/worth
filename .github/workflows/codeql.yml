@@ -1,0 +1,48 @@
+# =============================================================================
+# codeql - static security analysis for the polyglot stacks.
+# Runs on pushes to main and a weekly cron (Monday 03:00 UTC).
+# =============================================================================
+name: codeql
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  security-events: write
+  contents: read
+  actions: read
+
+jobs:
+  analyze:
+    name: "codeql / ${{ matrix.language }}"
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [go, java-kotlin, python, csharp]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+
+      # Compiled languages need a build; Go and Python are analyzed directly.
+      - name: Autobuild
+        if: ${{ matrix.language == 'java-kotlin' || matrix.language == 'csharp' }}
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

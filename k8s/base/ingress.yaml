@@ -1,0 +1,57 @@
+# =============================================================================
+# Ingress (nginx class) - public entrypoint for the cluster.
+#
+# Routing:
+#   /v1   -> ingest-gateway:3100   (ingest + query APIs, SSE stream)
+#   /api  -> web:3000              (Next.js API routes)
+#   /     -> web:3000              (dashboard UI)
+#
+# The tls section references secret `lodestar-tls`; provision it with
+# cert-manager or manually before relying on HTTPS.
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: lodestar
+  namespace: lodestar
+  labels:
+    app.kubernetes.io/name: lodestar-ingress
+    app.kubernetes.io/part-of: lodestar
+  annotations:
+    # SSE-friendly settings for /v1/stream (long-lived responses).
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - lodestar.example.com
+      secretName: lodestar-tls
+  rules:
+    - host: lodestar.example.com
+      http:
+        paths:
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: ingest-gateway
+                port:
+                  number: 3100
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 3000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 3000

@@ -1,0 +1,102 @@
+# Dependabot dependency updates - all ecosystems, weekly.
+version: 2
+
+updates:
+  # --- CI / platform tooling -------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies, ci]
+
+  # --- Web (Next.js app at repo root, bun-managed npm deps) ------------------
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    labels: [dependencies, web]
+
+  # --- Ingest gateway (Go) ----------------------------------------------------
+  - package-ecosystem: gomod
+    directory: /services/ingest-gateway
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies, gateway]
+
+  # --- AIOps engine (Python) ---------------------------------------------------
+  - package-ecosystem: pip
+    directory: /services/aiops-engine
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies, aiops]
+
+  # --- Billing core (Java/Maven) ----------------------------------------------
+  - package-ecosystem: maven
+    directory: /services/billing-core
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies, billing]
+
+  # --- Reporting (C#/.NET) ------------------------------------------------------
+  - package-ecosystem: nuget
+    directory: /services/reporting
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies, reporting]
+
+  # --- Mobile companion (Flutter/Dart) -----------------------------------------
+  - package-ecosystem: pub
+    directory: /apps/mobile
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies, mobile]
+
+  # --- Container base images ----------------------------------------------------
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies, docker, web]
+
+  - package-ecosystem: docker
+    directory: /services/ingest-gateway
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies, docker, gateway]
+
+  - package-ecosystem: docker
+    directory: /services/aiops-engine
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies, docker, aiops]
+
+  - package-ecosystem: docker
+    directory: /services/billing-core
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies, docker, billing]
+
+  - package-ecosystem: docker
+    directory: /services/reporting
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies, docker, reporting]
+
+  - package-ecosystem: docker
+    directory: /edge/pulseagent
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: [dependencies, docker, edge]

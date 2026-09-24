@@ -1,0 +1,141 @@
+# =============================================================================
+# ingest-gateway (Go 1.23) - Deployment + Service + HPA.
+# HPA scales on CPU utilization: 70% target, 2..6 replicas.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingest-gateway
+  namespace: lodestar
+  labels:
+    app.kubernetes.io/name: ingest-gateway
+    app.kubernetes.io/instance: lodestar
+    app.kubernetes.io/component: ingestion
+    app.kubernetes.io/part-of: lodestar
+    app.kubernetes.io/version: "0.1.0"
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ingest-gateway
+      app.kubernetes.io/instance: lodestar
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ingest-gateway
+        app.kubernetes.io/instance: lodestar
+        app.kubernetes.io/component: ingestion
+        app.kubernetes.io/part-of: lodestar
+        app.kubernetes.io/version: "0.1.0"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ingest-gateway
+          image: ghcr.io/lodestar-oss/lodestar-gateway:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3100
+              protocol: TCP
+          env:
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: lodestar-config
+                  key: GATEWAY_PORT
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: lodestar-config
+                  key: LOG_LEVEL
+            - name: API_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: lodestar-secrets
+                  key: API_KEYS
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /v1/health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingest-gateway
+  namespace: lodestar
+  labels:
+    app.kubernetes.io/name: ingest-gateway
+    app.kubernetes.io/instance: lodestar
+    app.kubernetes.io/component: ingestion
+    app.kubernetes.io/part-of: lodestar
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ingest-gateway
+    app.kubernetes.io/instance: lodestar
+  ports:
+    - name: http
+      port: 3100
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ingest-gateway
+  namespace: lodestar
+  labels:
+    app.kubernetes.io/name: ingest-gateway
+    app.kubernetes.io/instance: lodestar
+    app.kubernetes.io/component: ingestion
+    app.kubernetes.io/part-of: lodestar
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ingest-gateway
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

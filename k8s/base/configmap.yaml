@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lodestar-config
+  namespace: lodestar
+  labels:
+    app.kubernetes.io/part-of: lodestar
+data:
+  # Shared, non-sensitive configuration consumed by all Lodestar services.
+  LOG_LEVEL: "info"
+  WEB_PORT: "3000"
+  GATEWAY_PORT: "3100"
+  AIOPS_PORT: "3200"
+  BILLING_PORT: "4100"
+  REPORTING_PORT: "4200"
+  # In-cluster service URLs (DNS names of the k8s Services).
+  GATEWAY_URL: "http://ingest-gateway:3100"
+  AIOPS_URL: "http://aiops-engine:3200"
+  NEXT_PUBLIC_APP_VERSION: "0.1.0"
+  # Runtime tuning.
+  JAVA_OPTS: "-XX:MaxRAMPercentage=75.0"
+  ASPNETCORE_URLS: "http://+:4200"
+  AGENT_INTERVAL: "5s"

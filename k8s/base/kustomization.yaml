@@ -1,0 +1,27 @@
+# =============================================================================
+# Kustomize base for the Lodestar platform.
+#
+# Apply with:  kubectl apply -k k8s/base
+#
+# The `lodestar-secrets` Secret is intentionally NOT managed here - create it
+# first (see secret.example.yaml) or pods referencing API_KEYS will not start.
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: lodestar
+
+commonLabels:
+  app.kubernetes.io/part-of: lodestar
+  app.kubernetes.io/managed-by: kustomize
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - ingest-gateway.yaml
+  - aiops-engine.yaml
+  - billing-core.yaml
+  - reporting.yaml
+  - web.yaml
+  - ingress.yaml
+  # - secret.example.yaml   # example only; provision secrets out-of-band

@@ -1,2 +1,154 @@
-skills/
+# =============================================================================
+# Lodestar polyglot monorepo - comprehensive .gitignore
+# (node/bun, go, python, java, dotnet, flutter, terraform, toolchains, IDEs)
+# =============================================================================
+
+# ---------------------------------------------------------------- node / bun
 node_modules/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+/coverage
+.next/
+out/
+/build
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Local env files (keep the example)
+.env*
+!.env.example
+
+# SQLite databases: ignore data, keep the directory placeholder
+db/*.db
+db/*.db-journal
+db/*.db-shm
+db/*.db-wal
+!db/.gitkeep
+
+# ------------------------------------------------------------------ go
+# Go build outputs (static gateway binary and friends)
+bin/
+*.exe
+*.test
+*.out
+
+# ------------------------------------------------------------------ c / edge
+# pulseagent build artifacts (gcc output at edge/pulseagent)
+edge/pulseagent/pulseagent
+*.o
+*.a
+
+# ------------------------------------------------------------------ python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+pip-log.txt
+
+# ------------------------------------------------------------------ java
+target/
+.mvn/wrapper/maven-wrapper.jar
+*.class
+*.jar
+!**/maven-wrapper.properties
+
+# ------------------------------------------------------------------ dotnet
+# Standard scoped patterns: match build outputs at any depth without
+# touching source trees (reporting/bin, reporting/obj, nested project dirs).
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+
+# ------------------------------------------------------------------ flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+.flutter/
+.pub-cache/
+.pub/
+
+# ------------------------------------------------------------------ terraform
+# Local terraform dirs and state. Lock files SHOULD be committed.
+.terraform/
+.terraform.tfstate.lock.info
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+!terraform.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+!.terraform.lock.hcl
+.terraformrc
+terraform.rc
+
+# ------------------------------------------------- user-space toolchains
+# Task 1 installs toolchains into ~/toolchains; never track copies that may
+# land in the repo root during setup.
+/toolchains/
+/ghcli/
+/jdk/
+/maven/
+/flutter/
+/go/
+setup.log
+
+# ------------------------------------------------------------------ logs
+logs/
+*.log
+dev.log
+server.log
+nohup.out
+
+# ------------------------------------------------------------------ IDE / OS
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# --------------------------------------------------------- workspace-local
+.claude
+.z-ai-config
+/skills/
+local-*
+test
+prompt
+
+# ------------------------------------------------------------------ misc
+*.pem
+*.crt
+*.key
+Thumbs.db
+
+# --- sandbox / workspace internals (not part of the product) ---
+worklog.md
+dev.log
+server.log
+logs/
+.zscripts/
+Caddyfile
+examples/
+tests/
+download/
+*.tgz

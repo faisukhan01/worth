@@ -1,0 +1,99 @@
+# =============================================================================
+# release - build and push service images to ghcr.io on v* tags, then create
+# a GitHub Release with generated notes.
+#
+# Prerequisites:
+#   - The web image builds from the root Dockerfile.web (owned by devops).
+#   - Per-service Dockerfiles at services/<svc>/Dockerfile are owned by the
+#     respective service agents and must exist for this workflow to succeed.
+#   - The `lodestar-oss` org/package must allow GITHUB_TOKEN package writes.
+# =============================================================================
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/lodestar-oss/lodestar
+
+jobs:
+  build-push:
+    name: "image / ${{ matrix.service }}"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: web
+            context: .
+            file: Dockerfile.web
+          - service: gateway
+            context: services/ingest-gateway
+            file: Dockerfile
+          - service: aiops
+            context: services/aiops-engine
+            file: Dockerfile
+          - service: billing
+            context: services/billing-core
+            file: Dockerfile
+          - service: reporting
+            context: services/reporting
+            file: Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}-${{ matrix.service }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          build-args: ${{ matrix.service == 'web' && format('NEXT_PUBLIC_APP_VERSION={0}', github.ref_name) || '' }}
+
+  github-release:
+    name: "github release"
+    needs: build-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create GitHub Release with generated notes
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          make_latest: true

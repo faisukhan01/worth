@@ -1,0 +1,172 @@
+# =============================================================================
+# ci - build and lint every stack that changed. No test steps by project rule.
+#
+# Job naming is badges-ready, e.g.:
+#   https://img.shields.io/github/actions/workflow/status/lodestar-oss/lodestar/ci.yml?label=ci
+# =============================================================================
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: "detect changed stacks"
+    runs-on: ubuntu-latest
+    outputs:
+      web: ${{ steps.filter.outputs.web }}
+      gateway: ${{ steps.filter.outputs.gateway }}
+      aiops: ${{ steps.filter.outputs.aiops }}
+      billing: ${{ steps.filter.outputs.billing }}
+      reporting: ${{ steps.filter.outputs.reporting }}
+      mobile: ${{ steps.filter.outputs.mobile }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            web:
+              - 'src/**'
+              - 'prisma/**'
+              - 'public/**'
+              - 'package.json'
+              - 'bun.lock'
+              - 'next.config.ts'
+              - 'tsconfig.json'
+              - 'Dockerfile.web'
+            gateway:
+              - 'services/ingest-gateway/**'
+            aiops:
+              - 'services/aiops-engine/**'
+            billing:
+              - 'services/billing-core/**'
+            reporting:
+              - 'services/reporting/**'
+            mobile:
+              - 'apps/mobile/**'
+
+  web:
+    name: "web / bun + next.js"
+    needs: changes
+    if: ${{ needs.changes.outputs.web == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: file:./ci.db
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_APP_VERSION: 0.0.0-ci
+      NEXT_PUBLIC_API_BASE_URL: http://127.0.0.1:3100
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Generate Prisma client
+        run: bunx prisma generate
+      - name: Lint
+        run: bun run lint
+      - name: Build
+        run: bun run build
+
+  gateway:
+    name: "gateway / go 1.23"
+    needs: changes
+    if: ${{ needs.changes.outputs.gateway == 'true' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/ingest-gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - name: Vet
+        run: go vet ./...
+      - name: Build
+        run: go build ./...
+
+  aiops:
+    name: "aiops / python 3.12"
+    needs: changes
+    if: ${{ needs.changes.outputs.aiops == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies and ruff
+        run: pip install -r services/aiops-engine/requirements.txt ruff
+      - name: Ruff lint
+        run: ruff check .
+        working-directory: services/aiops-engine
+
+  billing:
+    name: "billing / java 17 maven"
+    needs: changes
+    if: ${{ needs.changes.outputs.billing == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Maven package (skip tests)
+        run: mvn -B -ntp package -DskipTests
+        working-directory: services/billing-core
+
+  reporting:
+    name: "reporting / dotnet 8"
+    needs: changes
+    if: ${{ needs.changes.outputs.reporting == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Dotnet build (Release)
+        run: dotnet build -c Release
+        working-directory: services/reporting
+
+  mobile:
+    name: "mobile / flutter 3.24"
+    needs: changes
+    if: ${{ needs.changes.outputs.mobile == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.24.5
+      - name: Pub get
+        run: flutter pub get
+        working-directory: apps/mobile
+      - name: Analyze
+        run: flutter analyze
+        working-directory: apps/mobile
+
+  all-green:
+    name: "all checks passed"
+    needs: [web, gateway, aiops, billing, reporting, mobile]
+    if: ${{ !failure() && !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summary
+        run: echo "All changed-stack checks passed (skipped stacks are OK)."

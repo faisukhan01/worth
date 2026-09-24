@@ -1,0 +1,193 @@
+# =============================================================================
+# Lodestar - Enterprise Observability & AIOps Platform
+# Local / sandbox orchestration for the full polyglot stack.
+#
+# Usage:
+#   docker compose up -d --build          # core platform (web, gateway, aiops, billing, reporting)
+#   docker compose --profile full up -d   # core platform + pulseagent (C edge agent)
+#   docker compose logs -f gateway        # tail a single service
+#
+# Notes:
+#   - Per-service Dockerfiles (services/*/Dockerfile, edge/pulseagent/Dockerfile)
+#     are owned by the respective service agents; this file only wires them together.
+#   - The web app persists its SQLite database via the ./db bind mount; billing
+#     persists its H2 files in the named `billing-data` volume so data survives
+#     `docker compose down` (use `down -v` to wipe).
+# =============================================================================
+
+name: lodestar
+
+networks:
+  lodestar-net:
+    driver: bridge
+
+volumes:
+  billing-data:
+    name: lodestar-billing-data
+
+services:
+  # --------------------------------------------------------------- web
+  # Next.js 16 dashboard (repo root). Standalone output, non-root user.
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+      args:
+        NEXT_PUBLIC_APP_VERSION: ${APP_VERSION:-0.1.0}
+    image: ghcr.io/lodestar-oss/lodestar-web:${APP_VERSION:-0.1.0}
+    container_name: lodestar-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      NODE_ENV: production
+      DATABASE_URL: file:/app/db/custom.db
+      GATEWAY_URL: http://gateway:3100
+      AIOPS_URL: http://aiops:3200
+      NEXT_PUBLIC_APP_VERSION: ${APP_VERSION:-0.1.0}
+    volumes:
+      - ./db:/app/db
+    healthcheck:
+      # node:20-alpine runner ships busybox wget.
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      gateway:
+        condition: service_healthy
+      aiops:
+        condition: service_healthy
+    networks:
+      - lodestar-net
+
+  # ------------------------------------------------------------ gateway
+  # Go 1.23 ingest gateway: metrics/log ingestion, query API, SSE stream.
+  gateway:
+    build:
+      context: ./services/ingest-gateway
+      dockerfile: Dockerfile
+    image: ghcr.io/lodestar-oss/lodestar-gateway:${APP_VERSION:-0.1.0}
+    container_name: lodestar-gateway
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    environment:
+      PORT: "3100"
+      API_KEYS: ${API_KEYS:-pg_live_demo_key}
+      LOG_LEVEL: info
+    healthcheck:
+      # Runtime image is expected to be alpine-based (busybox wget available);
+      # owned by the gateway service agent - see services/ingest-gateway/Dockerfile.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3100/v1/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - lodestar-net
+
+  # -------------------------------------------------------------- aiops
+  # Python 3.12 FastAPI AIOps engine: pulls from the gateway every 5s.
+  aiops:
+    build:
+      context: ./services/aiops-engine
+      dockerfile: Dockerfile
+    image: ghcr.io/lodestar-oss/lodestar-aiops:${APP_VERSION:-0.1.0}
+    container_name: lodestar-aiops
+    restart: unless-stopped
+    ports:
+      - "3200:3200"
+    environment:
+      PORT: "3200"
+      GATEWAY_URL: http://gateway:3100
+      LOG_LEVEL: info
+    healthcheck:
+      # python:*-slim images ship neither curl nor wget; use the stdlib instead.
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:3200/v1/health\", timeout=3)' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks:
+      - lodestar-net
+
+  # ------------------------------------------------------------- billing
+  # Java 17 / Spring Boot 3 billing core with file-backed H2.
+  billing:
+    build:
+      context: ./services/billing-core
+      dockerfile: Dockerfile
+    image: ghcr.io/lodestar-oss/lodestar-billing:${APP_VERSION:-0.1.0}
+    container_name: lodestar-billing
+    restart: unless-stopped
+    ports:
+      - "4100:4100"
+    environment:
+      PORT: "4100"
+      JAVA_OPTS: -XX:MaxRAMPercentage=75.0
+      SPRING_DATASOURCE_URL: jdbc:h2:file:/data/billing
+    volumes:
+      - billing-data:/data
+    healthcheck:
+      # Spring Boot actuator endpoint; the billing Dockerfile (owned by the
+      # billing service agent) is expected to be debian/temurin-based with curl.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4100/actuator/health || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    networks:
+      - lodestar-net
+
+  # ----------------------------------------------------------- reporting
+  # C# / .NET 8 reporting service.
+  reporting:
+    build:
+      context: ./services/reporting
+      dockerfile: Dockerfile
+    image: ghcr.io/lodestar-oss/lodestar-reporting:${APP_VERSION:-0.1.0}
+    container_name: lodestar-reporting
+    restart: unless-stopped
+    ports:
+      - "4200:4200"
+    environment:
+      ASPNETCORE_URLS: http://+:4200
+      PORT: "4200"
+    healthcheck:
+      # mcr.microsoft.com/dotnet/aspnet:8.0 (debian) images include curl.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:4200/healthz || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - lodestar-net
+
+  # ---------------------------------------------------------- pulseagent
+  # C edge agent reading real host metrics from /proc. Optional build/run
+  # stage - enabled only with `docker compose --profile full up -d`.
+  pulseagent:
+    profiles: ["full"]
+    build:
+      context: ./edge/pulseagent
+      dockerfile: Dockerfile
+    image: ghcr.io/lodestar-oss/lodestar-pulseagent:${APP_VERSION:-0.1.0}
+    container_name: lodestar-pulseagent
+    restart: unless-stopped
+    # Read the real host /proc, not the container's own namespace.
+    pid: "host"
+    environment:
+      GATEWAY_URL: http://gateway:3100
+      API_KEYS: ${API_KEYS:-pg_live_demo_key}
+      AGENT_INTERVAL: 5s
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks:
+      - lodestar-net

@@ -1,0 +1,27 @@
+# =============================================================================
+# Example variable values. Copy to terraform.tfvars and adjust.
+#   cp terraform.tfvars.example terraform.tfvars
+# Never commit real terraform.tfvars with sensitive values.
+# =============================================================================
+
+aws_region         = "us-east-1"
+project_name       = "lodestar"
+environment        = "prod"
+vpc_cidr           = "10.0.0.0/16"
+
+app_version        = "0.1.0"
+web_image          = "ghcr.io/lodestar-oss/lodestar-web:0.1.0"
+gateway_image      = "ghcr.io/lodestar-oss/lodestar-gateway:0.1.0"
+aiops_image        = "ghcr.io/lodestar-oss/lodestar-aiops:0.1.0"
+
+web_desired_count     = 2
+gateway_desired_count = 2
+aiops_desired_count   = 1
+
+log_retention_days = 30
+
+# Leave empty to skip the HTTPS listener (HTTP-only sandbox).
+# Set to a valid ACM certificate ARN to enable HTTPS on :443.
+acm_certificate_arn = ""
+
+container_insights = false

@@ -1,0 +1,81 @@
+# =============================================================================
+# Lodestar web (Next.js 16) - multi-stage image.
+#
+# Stage 1 (deps):    install locked node_modules with bun.
+# Stage 2 (builder): prisma generate + next build (standalone output).
+# Stage 3 (runner):  minimal node:20-alpine, non-root `nextjs` user.
+#
+# Build:
+#   docker build -f Dockerfile.web -t ghcr.io/lodestar-oss/lodestar-web:0.1.0 \
+#     --build-arg NEXT_PUBLIC_APP_VERSION=0.1.0 .
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Stage 1: dependencies
+# ---------------------------------------------------------------------------
+FROM oven/bun:1 AS deps
+WORKDIR /app
+
+# Copy manifests first for maximal layer caching.
+COPY package.json bun.lock ./
+# Prisma schema must exist before install so the prisma postinstall hook can resolve it.
+COPY prisma ./prisma
+
+RUN bun install --frozen-lockfile
+
+# ---------------------------------------------------------------------------
+# Stage 2: builder
+# ---------------------------------------------------------------------------
+FROM oven/bun:1 AS builder
+WORKDIR /app
+
+ENV NEXT_TELEMETRY_DISABLED=1
+# Build-time public version stamp (baked into the client bundle).
+ARG NEXT_PUBLIC_APP_VERSION=dev
+ENV NEXT_PUBLIC_APP_VERSION=${NEXT_PUBLIC_APP_VERSION}
+# Prisma client generation requires a DATABASE_URL env to be resolvable;
+# the runtime value is injected at `docker run` / deploy time.
+ENV DATABASE_URL=file:/app/db/custom.db
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+RUN bunx prisma generate
+RUN bun run build
+
+# ---------------------------------------------------------------------------
+# Stage 3: runner
+# ---------------------------------------------------------------------------
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+LABEL org.opencontainers.image.source="https://github.com/lodestar-oss/lodestar"
+LABEL org.opencontainers.image.description="Lodestar web dashboard (Next.js 16)"
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+
+# Non-root runtime user.
+RUN addgroup --system --gid 1001 nodejs \
+    && adduser --system --uid 1001 nextjs
+
+# `next build` with output:"standalone" emits .next/standalone/server.js.
+# The project build script also copies static assets + public into standalone;
+# the explicit COPYs below are kept as a defensive fallback.
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+
+# Writable SQLite location (bind-mounted or emptyDir at runtime).
+RUN mkdir -p /app/db && chown nextjs:nodejs /app/db
+
+USER nextjs
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/api/health || exit 1
+
+CMD ["node", "server.js"]

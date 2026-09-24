@@ -1,0 +1,69 @@
+# =============================================================================
+# .dockerignore for the web image build (context = repo root, Dockerfile.web).
+# Keeps the build context small and secrets out of layers.
+# =============================================================================
+
+# --- VCS / CI / platform ---
+.git
+.gitignore
+.github
+.idea
+.vscode
+
+# --- Node / Next.js build artifacts ---
+node_modules
+.next
+out
+coverage
+*.tsbuildinfo
+next-env.d.ts
+.eslintcache
+
+# --- Local databases: never bake data into images ---
+db/*.db
+db/*.db-journal
+db/*.db-shm
+db/*.db-wal
+
+# --- Env / secrets ---
+.env*
+!.env.example
+
+# --- Logs / runtime junk ---
+logs
+*.log
+dev.log
+server.log
+nohup.out
+.DS_Store
+
+# --- Other stacks (each has its own build context under services/ and edge/) ---
+services
+apps
+edge
+infra
+k8s
+docs
+tests
+examples
+download
+upload
+mini-services
+skills
+.zscripts
+toolchains
+ghcli
+jdk
+maven
+
+# --- Files not needed inside the image ---
+Caddyfile
+worklog.md
+README.devops-notes.md
+Dockerfile.web
+docker-compose.yml
+Makefile
+ARCHITECTURE.md
+CHANGELOG.md
+CONTRIBUTING.md
+SECURITY.md
