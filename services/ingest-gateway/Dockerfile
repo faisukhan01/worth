@@ -1,5 +1,5 @@
 # Lodestar ingest-gateway - high-throughput telemetry ingestion service.
-FROM golang:1.23-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /src
 COPY go.mod ./
 RUN go mod download
