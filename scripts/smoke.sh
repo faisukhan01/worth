@@ -91,6 +91,7 @@ probe "GET /api/aiops"           '"anomalies"'       GET "$WEB/api/aiops"
 probe "GET /api/billing"         '"quotas"'          GET "$WEB/api/billing"
 probe "GET /api/reports"         '"reports"'         GET "$WEB/api/reports"
 probe "GET evaluator status"     '"inProgress"'      GET "$WEB/api/alerts/rules/evaluate-all"
+probe "GET drift snapshots"      '"watched"'         GET "$WEB/api/reports/snapshots?limit=6"
 
 echo "gateway ingest round-trip:"
 ts=$(date +%s%3N)
@@ -111,6 +112,9 @@ if [ "$DEEP" -eq 1 ]; then
     -d '{"serviceId":"api-gateway","windowDays":7,"sloTarget":99.9}'
   # Mutating but safe: breaches dedup on rule:<id>, quiet rules are untouched.
   probe "POST evaluator sweep"    '"checked"'         POST "$WEB/api/alerts/rules/evaluate-all"
+  # Single-service drift snapshot: diff vs previous, dedup on drift:<service>.
+  probe "POST drift snapshot"     '"results"'         POST "$WEB/api/reports/snapshots" \
+    -H 'content-type: application/json' -d '{"serviceId":"api-gateway"}'
 fi
 
 echo "-----------------------------------------------------------------------"

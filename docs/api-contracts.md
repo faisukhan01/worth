@@ -233,6 +233,35 @@ an open incident counts as `deduped` (no spam); a cleared condition
 auto-resolves the rule's incident **only while it is still `triggered`**
 (acknowledged/mitigated incidents stay open for a human to close).
 
+Every sweep verdict is also persisted to a local `rule_sweeps` table (kept
+to the newest 3000 rows) and returned by the status endpoint as `history` -
+a per-rule verdict timeline (`{ at, action, currentValue }[]`, oldest ->
+newest) that powers the sparkstrip in the rules table.
+
+### GET/POST /api/reports/snapshots (report drift watch)
+
+`src/lib/report-drift.ts` snapshots every catalogued service's 7-day SLA
+through the C# reporting plane every **3 minutes** (background loop + a
+sweep-on-read nudge in GET), stores the numbers in a local `report_snapshots`
+table (48 kept per service) and diffs each snapshot against the previous one.
+
+- `GET /api/reports/snapshots?limit=24` -
+  `{ watched: string[], snapshots: Record<service, DriftSnapshot[]>, lastCycle, inProgress }`
+  where `DriftSnapshot = { id, service, takenAt, windowDays, sloTarget,
+  availability, burnRate, budgetRemaining, reportId }` (oldest -> newest per
+  service).
+- `POST /api/reports/snapshots` - take a cycle now. Body
+  `{ serviceId?: string }`; without it every watched service is snapshotted.
+  Returns the cycle: `{ at, durationMs, taken, drifts, results[] }` with per
+  service `snapshot`, `diff` and optional `incidentId` / `incidentAction`.
+
+Drift semantics: availability change >= **0.05pp** or burn change >= **x0.75**
+between consecutive snapshots is drift; >= 0.2pp / x2 escalates to `critical`.
+Drift registers a real incident (`source=report-drift`, dedupKey
+`drift:<service>`) that dedupes while open and **auto-resolves once the
+numbers settle** while still `triggered`. Full cycles only update
+`lastCycle`; single-service POSTs only touch their own row.
+
 ### PATCH /api/alerts/rules/:id
 
 Body `{ enabled: boolean }` - arm/mute a rule. Muting also auto-resolves the

@@ -212,12 +212,82 @@ interface EvaluatorGlobal {
   __lodestarLastSweep?: SweepResult | null
   __lodestarSweepInProgress?: boolean
   __lodestarEvaluatorLoop?: ReturnType<typeof setInterval> | null
+  __lodestarSweepsTable?: boolean
 }
 
 const g = globalThis as typeof globalThis & EvaluatorGlobal
 g.__lodestarLastSweep ??= null
 g.__lodestarSweepInProgress = false
 g.__lodestarEvaluatorLoop ??= null
+
+const SWEEP_ROWS_KEPT = 3000
+
+function ensureSweepsTable(): void {
+  if (g.__lodestarSweepsTable) return
+  db.$executeRaw`
+    CREATE TABLE IF NOT EXISTS rule_sweeps (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      rule_id TEXT NOT NULL,
+      at TEXT NOT NULL,
+      action TEXT NOT NULL,
+      current_value REAL,
+      reason TEXT NOT NULL
+    )
+  `
+    .then(() => db.$executeRaw`CREATE INDEX IF NOT EXISTS idx_sweeps_rule ON rule_sweeps (rule_id, id)`)
+    .catch(() => {})
+  g.__lodestarSweepsTable = true
+}
+
+export interface SweepHistoryEntry {
+  at: string
+  action: SweepAction
+  currentValue: number | null
+}
+
+/** Recent per-rule verdict timeline (oldest -> newest), used by the rules table sparkstrip. */
+export async function sweepHistory(perRule = 20): Promise<Record<string, SweepHistoryEntry[]>> {
+  ensureSweepsTable()
+  try {
+    const rows = await db.$queryRaw<
+      { ruleId: string; at: string; action: string; currentValue: number | null }[]
+    >`SELECT rule_id AS ruleId, at, action, current_value AS currentValue
+       FROM rule_sweeps ORDER BY id DESC LIMIT ${SWEEP_ROWS_KEPT}`
+    const out: Record<string, SweepHistoryEntry[]> = {}
+    for (const r of rows) {
+      const list = out[r.ruleId] ?? (out[r.ruleId] = [])
+      if (list.length < perRule) {
+        list.push({
+          at: new Date(r.at).toISOString(),
+          action: r.action as SweepAction,
+          currentValue: r.currentValue,
+        })
+      }
+    }
+    for (const key of Object.keys(out)) out[key].reverse()
+    return out
+  } catch {
+    return {}
+  }
+}
+
+async function persistSweepResults(sweep: SweepResult): Promise<void> {
+  ensureSweepsTable()
+  try {
+    for (const r of sweep.results) {
+      await db.$executeRaw`
+        INSERT INTO rule_sweeps (rule_id, at, action, current_value, reason)
+        VALUES (${r.ruleId}, ${sweep.at}, ${r.action}, ${r.currentValue}, ${r.reason})
+      `
+    }
+    await db
+      .$executeRaw`DELETE FROM rule_sweeps WHERE id NOT IN (SELECT id FROM rule_sweeps ORDER BY id DESC LIMIT ${SWEEP_ROWS_KEPT})`
+      .catch(() => {})
+  } catch {
+    // history is best-effort; the live verdict chips above already carry the
+    // latest state so a failed insert must never break a sweep
+  }
+}
 
 export function lastSweep(): SweepResult | null {
   return g.__lodestarLastSweep ?? null
@@ -360,6 +430,7 @@ export async function runSweep(): Promise<SweepResult> {
       results,
     }
     g.__lodestarLastSweep = sweep
+    await persistSweepResults(sweep)
     return sweep
   } finally {
     g.__lodestarSweepInProgress = false

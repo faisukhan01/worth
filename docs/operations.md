@@ -77,13 +77,14 @@ tail -f logs/<plane>.log                 # per-plane logs land in <repo>/logs/
 ### Smoke probe
 
 `scripts/smoke.sh` (or `make smoke`) verifies every plane and console API in
-one shot: five health endpoints, seven console API GETs, a gateway ingest ->
+one shot: five health endpoints, eight console API GETs, a gateway ingest ->
 query round-trip, and both SSE live streams (gateway fan-out + console proxy).
 Exit code 0 means core is green; code-tier planes warn but never fail the run.
 
 ```sh
-make smoke                 # read-only probes (17 checks)
-make smoke SMOKE=deep      # additionally generates a 7d SLA report (C# write path)
+make smoke                 # read-only probes (19 checks)
+make smoke SMOKE=deep      # additionally generates a 7d SLA report, sweeps rules
+                           # and takes a drift snapshot (22 checks)
 scripts/smoke.sh           # same as make smoke
 ```
 

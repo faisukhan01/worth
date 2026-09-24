@@ -65,6 +65,16 @@ const VERDICT_STYLE: Record<SweepRuleResult['action'], string> = {
   error: 'border-crit/40 bg-crit/10 text-crit',
 }
 
+/** Tone for the per-rule sweep-history sparkstrip squares. */
+const SWEEP_TONE: Record<SweepRuleResult['action'], 'ok' | 'warn' | 'crit' | 'neutral'> = {
+  fired: 'crit',
+  deduped: 'warn',
+  'auto-resolved': 'ok',
+  quiet: 'neutral',
+  'not-evaluable': 'neutral',
+  error: 'crit',
+}
+
 export function AlertsView() {
   const { data, isLoading } = useAlerts()
   const { data: settings } = useSettings()
@@ -702,6 +712,37 @@ export function AlertsView() {
                             </span>
                           )
                         })()}
+                        {(() => {
+                          const hist = sweepStatus.data?.history?.[r.id] ?? []
+                          if (hist.length === 0) return null
+                          const strip = hist.slice(-14)
+                          return (
+                            <span
+                              className="flex items-center gap-[2px]"
+                              title={`last ${strip.length} sweep${strip.length === 1 ? '' : 's'} · oldest ${timeAgo(strip[0].at)}`}
+                            >
+                              {strip.map((h, idx) => {
+                                const tone = SWEEP_TONE[h.action]
+                                const last = idx === strip.length - 1
+                                const dim = h.action === 'quiet' || h.action === 'not-evaluable'
+                                return (
+                                  <span
+                                    key={`${h.at}-${idx}`}
+                                    title={`${h.action} · ${timeAgo(h.at)}${h.currentValue != null ? ` · ${h.currentValue}` : ''}`}
+                                    className={cn(
+                                      'h-2 w-2 shrink-0 rounded-[2px] transition-transform hover:scale-125',
+                                      tone === 'neutral' && 'border border-border',
+                                    )}
+                                    style={{
+                                      background: tone === 'neutral' ? undefined : TONE_COLOR[tone],
+                                      opacity: last ? 1 : dim ? 0.3 : 0.55,
+                                    }}
+                                  />
+                                )
+                              })}
+                            </span>
+                          )
+                        })()}
                       </div>
                     </td>
                     <td className="px-4 py-2.5 text-right">
@@ -722,7 +763,7 @@ export function AlertsView() {
               </tbody>
             </table>
             <div className="border-t bg-muted/20 px-4 py-2 text-[10px] text-muted-foreground">
-              Armed rules are evaluated <span className="font-medium text-foreground/70">every minute in the background</span> - breaches register real incidents (tagged <span className="font-medium text-foreground/70">rule</span>), cleared conditions auto-resolve untouched ones. Test evaluates read-only: gateway metrics against live telemetry, <span className="font-medium text-foreground/70">slo.*</span> rules against the newest SLA report. If it would fire, you can register a DRILL incident from the toast to rehearse ack/mitigate/resolve.
+              Armed rules are evaluated <span className="font-medium text-foreground/70">every minute in the background</span> - breaches register real incidents (tagged <span className="font-medium text-foreground/70">rule</span>), cleared conditions auto-resolve untouched ones. The square strip per rule is its recent sweep verdict history (crit = fired, amber = deduped, green = auto-resolved). Test evaluates read-only: gateway metrics against live telemetry, <span className="font-medium text-foreground/70">slo.*</span> rules against the newest SLA report. If it would fire, you can register a DRILL incident from the toast to rehearse ack/mitigate/resolve.
             </div>
           </div>
         </TabsContent>

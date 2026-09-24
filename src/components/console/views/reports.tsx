@@ -1,11 +1,12 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { useReports, useGenerateReport, type SlaReportPayload } from '@/hooks/use-console-data'
+import { useReports, useGenerateReport, useDriftWatch, useTakeSnapshot, type SlaReportPayload, type DriftSnapshot, type DriftCyclePayload } from '@/hooks/use-console-data'
 import { EmptyState, TONE_COLOR, SectionHeader, StatusPill } from '@/components/console/primitives'
 import { Skeleton } from '@/components/ui/skeleton'
 import { toast } from 'sonner'
-import { ArrowDownRight, ArrowUpRight, Check, FileBarChart, Download, Play, Gauge, Timer, ShieldCheck, Flame, GitCompareArrows, X } from 'lucide-react'
+import { timeAgo } from '@/lib/format'
+import { ArrowDownRight, ArrowUpRight, Check, FileBarChart, Download, Play, Gauge, Timer, ShieldCheck, Flame, GitCompareArrows, X, Radar, Camera } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -145,6 +146,9 @@ export function ReportsView() {
           {fmtBudget(windowDays, sloTarget)} · reports persist on the reporting plane and appear below
         </p>
       </div>
+
+      {/* Drift watch ------------------------------------------------------ */}
+      <DriftWatchCard />
 
       {/* Active report ---------------------------------------------------- */}
       {reportsQuery.isLoading && !shown && <ReportSkeleton />}
@@ -582,6 +586,229 @@ function ReportCompare({ a, b, onClose }: { a: SlaReportPayload; b: SlaReportPay
             </div>
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+// ---- drift watch ----------------------------------------------------------------
+
+const DRIFT_AVAIL_PP = 0.05
+const DRIFT_BURN = 0.75
+
+/** Client-side mirror of the server drift thresholds (last vs previous snapshot). */
+function clientDiff(snaps: DriftSnapshot[]): DriftCyclePayload['results'][number]['diff'] {
+  if (snaps.length < 2) return null
+  const last = snaps[snaps.length - 1]
+  const prev = snaps[snaps.length - 2]
+  const availabilityDelta = Math.round((last.availability - prev.availability) * 1000) / 1000
+  const burnDelta = Math.round((last.burnRate - prev.burnRate) * 1000) / 1000
+  const drift = Math.abs(availabilityDelta) >= DRIFT_AVAIL_PP || Math.abs(burnDelta) >= DRIFT_BURN
+  return {
+    prevTakenAt: prev.takenAt,
+    availabilityDelta,
+    burnDelta,
+    drift,
+    severity: Math.abs(availabilityDelta) >= 0.2 || Math.abs(burnDelta) >= 2 ? 'critical' : 'warning',
+  }
+}
+
+/** Tiny SVG sparkline over snapshot availabilities (auto-scaled). */
+function SnapSpark({ snaps, sloTarget }: { snaps: DriftSnapshot[]; sloTarget: number }) {
+  if (snaps.length < 2) {
+    return <span className="text-[10px] text-muted-foreground">collecting…</span>
+  }
+  const vals = snaps.map((s) => s.availability)
+  const min = Math.min(...vals, sloTarget)
+  const max = Math.max(...vals, sloTarget)
+  const span = Math.max(max - min, 0.01)
+  const w = 96
+  const h = 26
+  const pts = vals.map((v, i) => {
+    const x = (i / (vals.length - 1)) * (w - 2) + 1
+    const y = h - 2 - ((v - min) / span) * (h - 4)
+    return [x, y] as const
+  })
+  const line = pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ')
+  const [lx, ly] = pts[pts.length - 1]
+  const color = vals[vals.length - 1] >= sloTarget ? 'var(--ok)' : 'var(--crit)'
+  return (
+    <svg width={w} height={h} className="overflow-visible" role="img" aria-label="availability across snapshots">
+      <polyline points={line} fill="none" stroke={color} strokeWidth={1.5} strokeLinejoin="round" strokeLinecap="round" opacity={0.85} />
+      <circle cx={lx} cy={ly} r={2} fill={color} />
+    </svg>
+  )
+}
+
+function DeltaChip({ value, fmt, goodWhen, title }: { value: number; fmt: (n: number) => string; goodWhen: 'up' | 'down'; title: string }) {
+  const flat = Math.abs(value) < 1e-9
+  const good = goodWhen === 'up' ? value > 0 : value < 0
+  const color = flat ? 'var(--muted-foreground)' : good ? 'var(--ok)' : 'var(--crit)'
+  const Arrow = value >= 0 ? ArrowUpRight : ArrowDownRight
+  return (
+    <span
+      className="inline-flex items-center gap-0.5 rounded border px-1.5 py-px text-[10px] font-medium tabular"
+      style={{ color, borderColor: `color-mix(in oklch, ${color} 30%, transparent)`, background: `color-mix(in oklch, ${color} 8%, transparent)` }}
+      title={title}
+    >
+      {!flat && <Arrow className="h-2.5 w-2.5" />}
+      {flat ? '±0' : fmt(value)}
+    </span>
+  )
+}
+
+function DriftWatchCard() {
+  const query = useDriftWatch()
+  const take = useTakeSnapshot()
+  const data = query.data
+  const watched = data?.watched ?? []
+  const lastCycle = data?.lastCycle ?? null
+
+  const takeAll = () => {
+    toast.promise(take.mutateAsync(undefined), {
+      loading: 'Snapshotting every watched service via the reporting plane…',
+      success: (c) => `Snapshot cycle complete · ${c.taken} taken · ${c.drifts} drifted`,
+      error: (e) => e.message,
+    })
+  }
+
+  const takeOne = (service: string) => {
+    toast.promise(take.mutateAsync(service), {
+      loading: `Snapshotting ${service}…`,
+      success: (c) => {
+        const r = c.results[0]
+        return r?.diff?.drift
+          ? `Drift detected on ${service} — incident ${r.incidentAction ?? 'registered'}`
+          : `Snapshot stored · ${service} steady`
+      },
+      error: (e) => e.message,
+    })
+  }
+
+  return (
+    <div className="card-surface">
+      <div className="flex flex-wrap items-center gap-2 border-b bg-muted/10 px-4 py-2.5 text-[11px]">
+        <span className="relative flex h-2 w-2" aria-hidden>
+          <span className={cn('absolute inline-flex h-full w-full animate-ping rounded-full opacity-50', data?.inProgress ? 'bg-primary' : 'bg-ok')} />
+          <span className={cn('relative inline-flex h-2 w-2 rounded-full', data?.inProgress ? 'bg-primary' : 'bg-ok')} />
+        </span>
+        <span className="flex items-center gap-1 font-medium">
+          <Radar className="h-3 w-3 text-muted-foreground" /> Drift watch
+        </span>
+        {lastCycle ? (
+          <span className="text-muted-foreground" title={`cycle took ${lastCycle.durationMs}ms`}>
+            last cycle {timeAgo(lastCycle.at)} · {lastCycle.taken} snapshots ·{' '}
+            <span className={lastCycle.drifts > 0 ? 'font-medium text-crit' : ''}>{lastCycle.drifts} drift</span>
+          </span>
+        ) : (
+          <span className="text-muted-foreground">first cycle pending…</span>
+        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          className="ml-auto h-6 gap-1 px-2 text-[10px]"
+          disabled={take.isPending || Boolean(data?.inProgress)}
+          onClick={takeAll}
+        >
+          <Camera className={cn('h-3 w-3', take.isPending && 'animate-pulse')} />
+          Snapshot all
+        </Button>
+      </div>
+
+      <div className="divide-y divide-border/50">
+        {watched.length === 0 && !query.isLoading && (
+          <div className="px-4 py-6">
+            <EmptyState title="No watched services" hint="the drift watch follows the service catalog" />
+          </div>
+        )}
+        {watched.map((svc) => {
+          const snaps = data?.snapshots[svc] ?? []
+          const latest = snaps[snaps.length - 1] ?? null
+          const diff = clientDiff(snaps)
+          const cycleEntry = lastCycle?.results.find((r) => r.service === svc)
+          return (
+            <div
+              key={svc}
+              className={cn(
+                'group flex flex-wrap items-center gap-x-4 gap-y-1.5 px-4 py-2 transition-colors hover:bg-accent/30',
+                diff?.drift && 'bg-crit/5',
+              )}
+            >
+              <span className="w-36 shrink-0 truncate font-mono text-[11px] text-foreground/90">{svc}</span>
+
+              <SnapSpark snaps={snaps} sloTarget={latest?.sloTarget ?? 99.9} />
+
+              {latest ? (
+                <>
+                  <span className="tabular text-[12px] font-semibold" style={{ color: availColor(latest.availability, latest.sloTarget) }}>
+                    {latest.availability.toFixed(3)}%
+                  </span>
+                  <span className="tabular text-[11px] text-muted-foreground">burn ×{latest.burnRate.toFixed(2)}</span>
+                  {diff ? (
+                    <>
+                      <DeltaChip
+                        value={diff.availabilityDelta}
+                        fmt={(n) => `${n >= 0 ? '+' : ''}${n.toFixed(3)}pp`}
+                        goodWhen="up"
+                        title={`availability Δ vs ${new Date(diff.prevTakenAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`}
+                      />
+                      <DeltaChip
+                        value={diff.burnDelta}
+                        fmt={(n) => `${n >= 0 ? '+' : ''}×${n.toFixed(2)}`}
+                        goodWhen="down"
+                        title={`burn Δ vs ${new Date(diff.prevTakenAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`}
+                      />
+                      {diff.drift && (
+                        <span
+                          className={cn(
+                            'rounded border px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider',
+                            diff.severity === 'critical' ? 'border-crit/40 bg-crit/10 text-crit' : 'border-warn/40 bg-warn/10 text-warn',
+                          )}
+                        >
+                          drift · {diff.severity}
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="rounded border border-border bg-muted/30 px-1.5 py-px text-[9px] uppercase tracking-wider text-muted-foreground">
+                      baseline
+                    </span>
+                  )}
+                  {cycleEntry?.incidentAction === 'fired' && (
+                    <span className="rounded border border-crit/40 bg-crit/10 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider text-crit">
+                      incident open
+                    </span>
+                  )}
+                  {cycleEntry?.incidentAction === 'auto-resolved' && (
+                    <span className="rounded border border-ok/40 bg-ok/10 px-1.5 py-px text-[9px] font-semibold uppercase tracking-wider text-ok">
+                      settled · auto-resolved
+                    </span>
+                  )}
+                  <span className="ml-auto hidden text-[10px] tabular text-muted-foreground sm:block" title={`${snaps.length} snapshots on file`}>
+                    {snaps.length} snaps
+                  </span>
+                  <button
+                    onClick={() => takeOne(svc)}
+                    disabled={take.isPending}
+                    aria-label={`Snapshot ${svc} now`}
+                    title="Snapshot this service now"
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-muted-foreground opacity-0 transition-all hover:border-ring hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-40"
+                  >
+                    <Camera className="h-3 w-3" />
+                  </button>
+                </>
+              ) : (
+                <span className="text-[11px] text-muted-foreground">
+                  {cycleEntry?.error ?? 'awaiting first snapshot…'}
+                </span>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="border-t bg-muted/20 px-4 py-2 text-[10px] text-muted-foreground">
+        Every 3 minutes each catalogued service's 7-day SLA is recomputed by the <span className="font-medium text-foreground/70">C# reporting plane</span> and stored locally. Availability drift ≥ {DRIFT_AVAIL_PP}pp or burn drift ≥ ×{DRIFT_BURN} between snapshots registers a real incident (tagged <span className="font-medium text-foreground/70">drift</span>) that auto-resolves once the numbers settle.
       </div>
     </div>
   )

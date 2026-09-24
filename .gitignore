@@ -158,3 +158,6 @@ mini-services/
 !src/app/api/alerts/rules/
 !src/app/api/alerts/rules/test/
 !src/app/api/logs/
+
+# sandbox tool artifacts (agent read-cache, not project code)
+tool-results/

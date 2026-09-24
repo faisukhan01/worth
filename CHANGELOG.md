@@ -37,7 +37,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sweep probe; api-contracts.md documents the evaluator, mute and
   postmortem endpoints.
 
-### Fixed - iteration 10
+### Added - console iteration 11
+- **Report drift watch (Reports)** - a background loop snapshots every
+  catalogued service's 7-day SLA through the C# reporting plane every 3
+  minutes, stores the numbers locally (`report_snapshots`, raw-SQL table so
+  the running dev server needs no Prisma regen) and diffs each snapshot
+  against the previous one. Availability drift >= 0.05pp or burn drift
+  >= x0.75 registers a real incident (`source=report-drift`, dedupKey
+  `drift:<service>`) that dedupes while open and auto-resolves once the
+  numbers settle. The Reports view gains a Drift watch card: live cycle
+  status, per-service availability sparklines over snapshots, delta chips
+  (pp + burn), drift/severity badges, incident-open / settled indicators and
+  snapshot-now buttons (all services or one).
+- **Per-rule sweep history (Alerts)** - every evaluator verdict is persisted
+  to a `rule_sweeps` table (newest 3000 rows) and returned by the evaluator
+  status endpoint as `history`; the rules table renders a sparkstrip of the
+  last 14 verdicts per rule (crit = fired, amber = deduped, green =
+  auto-resolved, hollow = quiet/no-data) with per-square tooltips.
+- Smoke probe coverage: `GET /api/reports/snapshots` in the default run
+  (19 checks) and a single-service drift snapshot POST in deep mode
+  (22 checks); api-contracts.md documents both new surfaces.
+
+### Fixed - console iteration 10
 - Radix `DialogContent` missing-description a11y warning on the New-rule
   dialog (`aria-describedby={undefined}`).
 - Postmortem reads/writes go through parameterized raw SQL for the new

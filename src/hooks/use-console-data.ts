@@ -532,6 +532,8 @@ export interface SweepResult {
 export interface SweepStatus {
   last: SweepResult | null
   inProgress: boolean
+  /** Recent per-rule verdict timeline (oldest -> newest) keyed by rule id. */
+  history?: Record<string, { at: string; action: SweepRuleResult['action']; currentValue: number | null }[]>
 }
 
 /** Poll the evaluator status (last sweep summary + live progress). */
@@ -583,6 +585,82 @@ export function useToggleRule() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['alerts'] })
       void qc.invalidateQueries({ queryKey: ['sweep'] })
+    },
+  })
+}
+
+// ---- report drift watch ------------------------------------------------------
+
+export interface DriftSnapshot {
+  id: string
+  service: string
+  takenAt: string
+  windowDays: number
+  sloTarget: number
+  availability: number
+  burnRate: number
+  budgetRemaining: number
+  reportId: string
+}
+
+export interface DriftCyclePayload {
+  at: string
+  durationMs: number
+  taken: number
+  drifts: number
+  results: {
+    service: string
+    snapshot: DriftSnapshot | null
+    diff: {
+      prevTakenAt: string
+      availabilityDelta: number
+      burnDelta: number
+      drift: boolean
+      severity: 'warning' | 'critical'
+    } | null
+    incidentId?: string
+    incidentAction?: 'fired' | 'deduped' | 'auto-resolved'
+    error?: string
+  }[]
+}
+
+export interface DriftWatchPayload {
+  watched: string[]
+  snapshots: Record<string, DriftSnapshot[]>
+  lastCycle: DriftCyclePayload | null
+  inProgress: boolean
+}
+
+/** Poll the drift watch (snapshot history + last cycle). */
+export function useDriftWatch() {
+  return useQuery({
+    queryKey: ['drift-watch'],
+    queryFn: () => getJson<DriftWatchPayload>('/api/reports/snapshots?limit=24'),
+    refetchInterval: 30_000,
+    placeholderData: (prev) => prev,
+  })
+}
+
+/** Snapshot all watched services (or one) right now and diff for drift. */
+export function useTakeSnapshot() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (serviceId?: string) => {
+      const res = await fetch('/api/reports/snapshots', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(serviceId ? { serviceId } : {}),
+      })
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string }
+        throw new Error(body.error ?? `request failed (${res.status})`)
+      }
+      return (await res.json()) as DriftCyclePayload
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['drift-watch'] })
+      void qc.invalidateQueries({ queryKey: ['alerts'] })
+      void qc.invalidateQueries({ queryKey: ['overview'] })
     },
   })
 }
