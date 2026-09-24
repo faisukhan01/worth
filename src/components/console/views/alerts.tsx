@@ -228,12 +228,12 @@ export function AlertsView() {
         <NewRuleDialog />
       </div>
 
-      {/* Summary strip */}
+      {/* Summary strip - counts follow the active filter */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard icon={<Siren className="h-3.5 w-3.5" />} label="Triggered" value={data.counts.triggered} tone="crit" />
-        <StatCard icon={<BellRing className="h-3.5 w-3.5" />} label="Acknowledged" value={data.counts.acknowledged} tone="warn" />
-        <StatCard icon={<Timer className="h-3.5 w-3.5" />} label="Mitigated" value={data.counts.mitigated} tone="neutral" />
-        <StatCard icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Resolved (register)" value={data.counts.resolved} tone="ok" />
+        <StatCard icon={<Siren className="h-3.5 w-3.5" />} label="Triggered" value={data.counts.triggered} filteredValue={filtersActive(filters) ? data.incidents.filter((i) => i.status === 'triggered' && matches(i)).length : undefined} tone="crit" />
+        <StatCard icon={<BellRing className="h-3.5 w-3.5" />} label="Acknowledged" value={data.counts.acknowledged} filteredValue={filtersActive(filters) ? data.incidents.filter((i) => i.status === 'acknowledged' && matches(i)).length : undefined} tone="warn" />
+        <StatCard icon={<Timer className="h-3.5 w-3.5" />} label="Mitigated" value={data.counts.mitigated} filteredValue={filtersActive(filters) ? data.incidents.filter((i) => i.status === 'mitigated' && matches(i)).length : undefined} tone="neutral" />
+        <StatCard icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Resolved (register)" value={data.counts.resolved} filteredValue={filtersActive(filters) ? data.incidents.filter((i) => i.status === 'resolved' && matches(i)).length : undefined} tone="ok" />
       </div>
 
       <Tabs defaultValue="incidents">
@@ -644,15 +644,26 @@ export function AlertsView() {
   )
 }
 
-function StatCard({ icon, label, value, tone }: { icon: React.ReactNode; label: string; value: number; tone: 'ok' | 'warn' | 'crit' | 'neutral' }) {
+function StatCard({ icon, label, value, filteredValue, tone }: { icon: React.ReactNode; label: string; value: number; filteredValue?: number; tone: 'ok' | 'warn' | 'crit' | 'neutral' }) {
+  const filtering = typeof filteredValue === 'number'
   return (
-    <div className="card-surface flex items-center gap-3 p-4">
+    <div
+      className={cn('card-surface flex items-center gap-3 p-4 transition-colors', filtering && filteredValue === 0 && 'opacity-55')}
+      title={filtering ? `${filteredValue} of ${value} match the active filter` : undefined}
+    >
       <span className="flex h-8 w-8 items-center justify-center rounded-lg border" style={{ color: TONE_COLOR[tone] }}>
         {icon}
       </span>
       <div>
-        <div className="text-lg font-semibold tabular leading-none">{value}</div>
-        <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
+        <div className="text-lg font-semibold tabular leading-none">
+          {filtering ? filteredValue : value}
+          {filtering && (
+            <span className="ml-1.5 text-[11px] font-normal text-muted-foreground tabular">/ {value}</span>
+          )}
+        </div>
+        <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+          {label}{filtering && ' · filtered'}
+        </div>
       </div>
     </div>
   )
