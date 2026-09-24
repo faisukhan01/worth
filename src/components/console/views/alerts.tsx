@@ -86,10 +86,18 @@ export function AlertsView() {
             }
             return (
               <div key={i.id} className="card-surface overflow-hidden">
-                <button
-                  className="flex w-full items-start gap-3 p-4 text-left transition-colors hover:bg-accent/20"
-                  onClick={() => setSelected(selected?.id === i.id ? null : (i as OpenIncident))}
+                <div
+                  role="button"
+                  tabIndex={0}
                   aria-expanded={selected?.id === i.id}
+                  className="flex w-full cursor-pointer items-start gap-3 p-4 text-left transition-colors hover:bg-accent/20"
+                  onClick={() => setSelected(selected?.id === i.id ? null : (i as OpenIncident))}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      setSelected(selected?.id === i.id ? null : (i as OpenIncident))
+                    }
+                  }}
                 >
                   <span className="mt-1 h-8 w-1 shrink-0 rounded-full" style={{ background: TONE_COLOR[tone] }} />
                   <div className="min-w-0 flex-1">
@@ -123,7 +131,7 @@ export function AlertsView() {
                       </Button>
                     </div>
                   )}
-                </button>
+                </div>
 
                 {selected?.id === i.id && (
                   <div className="border-t bg-muted/10 px-6 py-4">

@@ -239,9 +239,9 @@ function PlaneRow({ name, tech, up }: { name: string; tech: string; up?: boolean
 export function LodestarMark({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 32 32" className={className} aria-hidden>
-      <rect x="1" y="1" width="30" height="30" rx="8" fill="var(--card)" stroke="var(--border)" />
-      <path d="M16 5 L19.2 12.8 L27 16 L19.2 19.2 L16 27 L12.8 19.2 L5 16 L12.8 12.8 Z" fill="var(--primary)" />
-      <circle cx="16" cy="16" r="2.1" fill="var(--background)" />
+      <rect x="1" y="1" width="30" height="30" rx="8" style={{ fill: 'var(--card)', stroke: 'var(--border)' }} />
+      <path d="M16 5 L19.2 12.8 L27 16 L19.2 19.2 L16 27 L12.8 19.2 L5 16 L12.8 12.8 Z" style={{ fill: 'var(--primary)' }} />
+      <circle cx="16" cy="16" r="2.1" style={{ fill: 'var(--background)' }} />
     </svg>
   )
 }

@@ -57,12 +57,12 @@ export function Sparkline({
     <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden className="overflow-visible">
       {filled && <defs>
         <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.28" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
+          <stop offset="0%" style={{ stopColor: color, stopOpacity: 0.28 }} />
+          <stop offset="100%" style={{ stopColor: color, stopOpacity: 0 }} />
         </linearGradient>
       </defs>}
       {filled && <path d={area} fill={`url(#${gid})`} />}
-      <path d={line} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+      <path d={line} fill="none" style={{ stroke: color }} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   )
 }
@@ -136,32 +136,32 @@ export function AreaChart({
       >
         <defs>
           <linearGradient id="area-fill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity="0.22" />
-            <stop offset="100%" stopColor={color} stopOpacity="0" />
+            <stop offset="0%" style={{ stopColor: color, stopOpacity: 0.22 }} />
+            <stop offset="100%" style={{ stopColor: color, stopOpacity: 0 }} />
           </linearGradient>
         </defs>
         {ticks.map((t, i) => (
           <g key={i}>
-            <line x1={PAD_L} x2={W - 8} y1={y(t)} y2={y(t)} stroke={FG} strokeOpacity="0.14" strokeDasharray="3 4" />
-            <text x={PAD_L - 6} y={y(t) + 3} textAnchor="end" fontSize="9" fill={FG} className="tabular">
+            <line x1={PAD_L} x2={W - 8} y1={y(t)} y2={y(t)} style={{ stroke: FG, strokeOpacity: 0.14 }} strokeDasharray="3 4" />
+            <text x={PAD_L - 6} y={y(t) + 3} textAnchor="end" fontSize="9" style={{ fill: FG }} className="tabular">
               {fmtNum(t)}
             </text>
           </g>
         ))}
         <path d={area} fill="url(#area-fill)" />
-        <path d={line} fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round" />
-        {bandPath && <path d={bandPath} fill="none" stroke={color} strokeOpacity="0.35" strokeWidth="1" strokeDasharray="4 4" />}
+        <path d={line} fill="none" style={{ stroke: color }} strokeWidth="1.8" strokeLinejoin="round" />
+        {bandPath && <path d={bandPath} fill="none" style={{ stroke: color }} strokeOpacity="0.35" strokeWidth="1" strokeDasharray="4 4" />}
         {data.map((d, i) =>
           i % Math.ceil(data.length / 6) === 0 ? (
-            <text key={i} x={x(i)} y={H - 6} textAnchor="middle" fontSize="9" fill={FG}>
+            <text key={i} x={x(i)} y={H - 6} textAnchor="middle" fontSize="9" style={{ fill: FG }}>
               {fmtClock(d.ts).slice(0, 5)}
             </text>
           ) : null,
         )}
         {hoverPt && (
           <g>
-            <line x1={x(hover!)} x2={x(hover!)} y1={8} y2={H - PAD_B} stroke={FG} strokeOpacity="0.35" />
-            <circle cx={x(hover!)} cy={y(hoverPt.value)} r="3.5" fill={color} stroke="var(--card)" strokeWidth="1.5" />
+            <line x1={x(hover!)} x2={x(hover!)} y1={8} y2={H - PAD_B} style={{ stroke: FG }} strokeOpacity="0.35" />
+            <circle cx={x(hover!)} cy={y(hoverPt.value)} r="3.5" style={{ fill: color, stroke: 'var(--card)' }} strokeWidth="1.5" />
           </g>
         )}
       </svg>
@@ -205,13 +205,13 @@ export function Gauge({ pct, label, size = 120 }: { pct: number; label?: string;
   const overflow = Math.max(0, clamped - 100)
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`${label ?? 'quota'} ${pct}%`}>
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={FG} strokeOpacity="0.15" strokeWidth="9" />
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" style={{ stroke: FG, strokeOpacity: 0.15 }} strokeWidth="9" />
       <circle
         cx={size / 2}
         cy={size / 2}
         r={r}
         fill="none"
-        stroke={color}
+        style={{ stroke: color }}
         strokeWidth="9"
         strokeLinecap="round"
         strokeDasharray={`${arc} ${c}`}
@@ -223,7 +223,7 @@ export function Gauge({ pct, label, size = 120 }: { pct: number; label?: string;
           cy={size / 2}
           r={r}
           fill="none"
-          stroke={CRIT}
+          style={{ stroke: CRIT }}
           strokeWidth="9"
           strokeLinecap="round"
           strokeDasharray={`${(Math.min(overflow, 50) / 100) * c} ${c}`}
@@ -231,11 +231,11 @@ export function Gauge({ pct, label, size = 120 }: { pct: number; label?: string;
           transform={`rotate(-90 ${size / 2} ${size / 2})`}
         />
       )}
-      <text x="50%" y="47%" textAnchor="middle" fontSize="20" fontWeight="600" fill="var(--foreground)" className="tabular">
+      <text x="50%" y="47%" textAnchor="middle" fontSize="20" fontWeight="600" style={{ fill: 'var(--foreground)' }} className="tabular">
         {pct.toFixed(0)}%
       </text>
       {label && (
-        <text x="50%" y="63%" textAnchor="middle" fontSize="9" fill={FG}>
+        <text x="50%" y="63%" textAnchor="middle" fontSize="9" style={{ fill: FG }}>
           {label}
         </text>
       )}

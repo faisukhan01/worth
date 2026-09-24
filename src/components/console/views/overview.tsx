@@ -2,7 +2,7 @@
 
 import { useOverview } from '@/hooks/use-console-data'
 import { RANGES, useConsole } from '@/store/console-store'
-import { KpiTile, StatusPill, LiveDot, SectionHeader, EmptyState, TONE_COLOR } from '@/components/console/primitives'
+import { KpiTile, StatusPill, LiveDot, SectionHeader, EmptyState, TONE_COLOR, statusTone } from '@/components/console/primitives'
 import { Sparkline, AreaChart, UptimeRibbon } from '@/components/console/charts'
 import { fmtNum, fmtPct, fmtMs, timeAgo } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -29,7 +29,7 @@ export function OverviewView() {
   if (!data) return <EmptyState title="Overview unavailable" hint="the aggregation API did not respond" />
 
   const { kpis, traffic, services, host, insights, incidents } = data
-  const statusTone = kpis.overallStatus === 'healthy' ? 'ok' : kpis.overallStatus === 'degraded' ? 'warn' : 'crit'
+  const overallTone = kpis.overallStatus === 'healthy' ? 'ok' : kpis.overallStatus === 'degraded' ? 'warn' : 'crit'
 
   return (
     <div className="space-y-4">
@@ -38,7 +38,7 @@ export function OverviewView() {
         <div>
           <h1 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
             Platform overview
-            <LiveDot tone={statusTone as 'ok' | 'warn' | 'crit'} />
+            <LiveDot tone={overallTone as 'ok' | 'warn' | 'crit'} />
           </h1>
           <p className="text-xs text-muted-foreground">
             {kpis.engineWarm ? 'AIOps engine warm · ' : 'engine warming · '}
@@ -102,7 +102,7 @@ export function OverviewView() {
           label="AIOps verdict"
           value={kpis.overallStatus === 'healthy' ? 'Nominal' : kpis.overallStatus === 'degraded' ? 'Degraded' : 'Critical'}
           sub={insights?.anomalies.length ? `${insights.anomalies.length} open anomalies` : 'no anomalies open'}
-          tone={statusTone as 'ok' | 'warn' | 'crit'}
+          tone={overallTone as 'ok' | 'warn' | 'crit'}
         />
       </div>
 

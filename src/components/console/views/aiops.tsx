@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useAiops } from '@/hooks/use-console-data'
-import { StatusPill, EmptyState, TONE_COLOR, SectionHeader } from '@/components/console/primitives'
+import { StatusPill, EmptyState, TONE_COLOR, SectionHeader, statusTone } from '@/components/console/primitives'
 import { AreaChart, ConfidenceBar } from '@/components/console/charts'
 import { fmtNum, timeAgo, fmtClock } from '@/lib/format'
 import { Skeleton } from '@/components/ui/skeleton'
