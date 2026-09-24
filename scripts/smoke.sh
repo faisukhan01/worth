@@ -92,6 +92,7 @@ probe "GET /api/billing"         '"quotas"'          GET "$WEB/api/billing"
 probe "GET /api/reports"         '"reports"'         GET "$WEB/api/reports"
 probe "GET evaluator status"     '"inProgress"'      GET "$WEB/api/alerts/rules/evaluate-all"
 probe "GET drift snapshots"      '"watched"'         GET "$WEB/api/reports/snapshots?limit=6"
+probe "GET admin tenants"        '"tenants"'         GET "$WEB/api/admin/tenants"
 
 echo "gateway ingest round-trip:"
 ts=$(date +%s%3N)

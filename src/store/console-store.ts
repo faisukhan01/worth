@@ -12,6 +12,7 @@ export type ViewKey =
   | 'billing'
   | 'reports'
   | 'settings'
+  | 'admin'
 
 export const VIEWS: { key: ViewKey; label: string; hint: string }[] = [
   { key: 'overview', label: 'Overview', hint: 'Platform heartbeat' },

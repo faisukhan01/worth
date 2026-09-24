@@ -279,6 +279,47 @@ The console renders it read-only with copy/download, or regenerate.
 
 ---
 
+## Admin / tenant onboarding (web tier, `/api/admin/*`)
+
+Operator-only surface for onboarding client companies. Secrets follow a
+write-once discipline: the full key/value is stored (needed for gateway
+activation) but list endpoints only ever return masked forms; the raw
+secret appears in exactly one response - the POST that created it.
+
+- `GET /api/admin/tenants` -> `{tenants: [...]}` with each tenant's
+  `keys` (masked), `sites` (incl. last probe result) and `credentials`
+  (masked).
+- `POST /api/admin/tenants` `{name, contact?, plan?, notes?,
+  website?: {url, label?, kind?}}` -> 201 `{tenant, firstKey: {secret}}`.
+  A first ingest key is provisioned automatically; the slug dedupes
+  (`acme-corp`, `acme-corp-2`, ...). Validation: name >= 2 chars, contact
+  must contain `@` when present, `plan` in
+  `starter|growth|scale|enterprise`, website URL must parse as http(s).
+- `PATCH /api/admin/tenants/:id` `{name?, contact?, plan?, status?,
+  notes?}` - status is `active|suspended`; bad plan/status -> 400.
+- `DELETE /api/admin/tenants/:id` - cascades keys, sites, credentials.
+- `POST /api/admin/tenants/:id/keys` `{label?}` -> 201
+  `{key: {masked...}, secret}` (shown once). 409 after 10 active keys.
+- `DELETE /api/admin/keys/:id` - revoke (idempotent, sets `revoked`).
+- `POST /api/admin/tenants/:id/sites` `{url, label?, kind?}` -> 201
+  `{site}` (409 after 20 sites; `kind` in `website|api|software`).
+- `POST /api/admin/sites/:id` - probe the endpoint NOW (GET, redirect
+  follow, 8s timeout): persists `lastStatus up|down` (non-5xx counts as
+  up), `lastHttpStatus`, `lastLatencyMs`, `lastCheckedAt` -> `{site,
+  probe: {ok, httpStatus, latencyMs}}`.
+- `DELETE /api/admin/sites/:id` - stop monitoring.
+- `POST /api/admin/tenants/:id/credentials` `{name, value, kind?}` -> 201
+  `{credential: {masked}}` (`kind` in `webhook|slack|custom`; 409 after
+  10; value >= 8 chars).
+- `DELETE /api/admin/credentials/:id` - remove.
+
+Tenant ingest keys use the gateway-compatible `pg_live_` prefix. To
+activate one against the Go gateway, add the full secret to the gateway's
+`API_KEYS` allow-list (comma-separated env var) and restart the plane;
+unlisted keys receive 401 from `/v1/ingest/*`.
+
+---
+
 ## Billing core (Java 17 / Spring Boot 3, port 4100) and Reporting (C# / .NET 8, port 4200)
 
 These are **code-tier** services: their detailed routes, request/response

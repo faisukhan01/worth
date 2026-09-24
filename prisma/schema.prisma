@@ -90,3 +90,68 @@ model UsageRecord {
   @@index([serviceKey, day])
   @@index([metricName, day])
 }
+
+// ---------------------------------------------------------------------------
+// Admin / multi-tenant onboarding: client companies registered by the platform
+// operator, their ingest API keys, monitored endpoints and integration
+// credentials (webhooks, Slack, vendor keys).
+// ---------------------------------------------------------------------------
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique // url-safe id, e.g. acme-corp
+  contact   String   @default("") // billing / ops contact email
+  plan      String   @default("starter") // starter | growth | scale | enterprise
+  status    String   @default("active") // active | suspended
+  notes     String   @default("")
+  createdAt DateTime @default(now())
+
+  keys        TenantKey[]
+  sites       MonitoredSite[]
+  credentials TenantCredential[]
+
+  @@index([status])
+}
+
+model TenantKey {
+  id         String    @id @default(cuid())
+  tenantId   String
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  label      String    @default("ingest") // what the key is for, e.g. "website ingest"
+  secret     String    @unique // full key, e.g. pg_live_xxxx… (activates via gateway API_KEYS)
+  prefix     String // masked display form, e.g. pg_live_9f2a…c1
+  revoked    Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+
+  @@index([tenantId, revoked])
+}
+
+model MonitoredSite {
+  id            String    @id @default(cuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  label         String    @default("") // e.g. "Marketing site"
+  url           String
+  kind          String    @default("website") // website | api | software
+  lastStatus    String? // up | down
+  lastHttpStatus Int?
+  lastLatencyMs Int?
+  lastCheckedAt DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([tenantId])
+}
+
+model TenantCredential {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind      String   @default("webhook") // webhook | slack | custom
+  name      String // e.g. "Slack #alerts webhook"
+  secret    String // full value; only masked form leaves the API
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+}

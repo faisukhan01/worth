@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import {
   Activity, BrainCircuit, CreditCard, LayoutDashboard, ScrollText,
   Settings, Siren, Boxes, Search, RefreshCw, ChevronRight,
-  CircleHelp, Radar, FileBarChart, Sun, Moon,
+  CircleHelp, Radar, FileBarChart, Sun, Moon, ShieldCheck,
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { Command, CommandDialog, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
@@ -171,6 +171,21 @@ export function ConsoleShell({ children }: { children: React.ReactNode }) {
             </button>
 
             <div className="ml-auto flex items-center gap-3">
+              {/* Admin panel entry point (company onboarding, keys, endpoints) */}
+              <Button
+                variant={view === 'admin' ? 'secondary' : 'ghost'}
+                size="sm"
+                className={cn(
+                  'h-8 gap-1.5 text-xs',
+                  view === 'admin' && 'font-medium text-primary',
+                )}
+                aria-label="Open admin panel"
+                onClick={() => setView(view === 'admin' ? 'overview' : 'admin')}
+              >
+                <ShieldCheck className="h-4 w-4" />
+                <span className="hidden sm:inline">Admin</span>
+              </Button>
+
               <div className="hidden items-center gap-1.5 rounded-full border bg-card/60 px-2.5 py-1 text-[11px] text-muted-foreground sm:flex">
                 <Radar className="h-3 w-3 text-primary" />
                 <span className="tabular">{now || '--:--:--'}</span>
@@ -274,6 +289,17 @@ export function ConsoleShell({ children }: { children: React.ReactNode }) {
                     </CommandItem>
                   )
                 })}
+                <CommandItem
+                  value="Admin"
+                  onSelect={() => {
+                    setView('admin')
+                    setPaletteOpen(false)
+                  }}
+                >
+                  <ShieldCheck className="mr-2 h-4 w-4" />
+                  <span>Admin</span>
+                  <span className="ml-auto text-xs text-muted-foreground">Companies &amp; keys</span>
+                </CommandItem>
               </CommandList>
             </Command>
           </CommandList>

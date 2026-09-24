@@ -37,6 +37,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sweep probe; api-contracts.md documents the evaluator, mute and
   postmortem endpoints.
 
+### Added - console iteration 12
+- **Admin panel (multi-tenant onboarding)** - a new top-bar `Admin` button
+  (ShieldCheck, toggles to/from the panel; also reachable from the command
+  palette) opens the company administration view. Operators onboard client
+  companies (name, contact, plan starter/growth/scale/enterprise, notes,
+  optional first endpoint), then manage per-company: ingest API keys
+  (`pg_live_*` secrets, generated with a shown-once reveal strip + copy,
+  masked reads, revoke, 10-active limit), monitored endpoints
+  (websites/APIs with a live reachability probe - GET with 8s timeout,
+  latency + HTTP status persisted, "Check now" per row), and integration
+  credentials (Slack/webhook/vendor secrets stored masked, never returned
+  in full). Companies can be suspended/activated (status switch) and
+  deleted with a cascade confirm dialog (keys, sites, credentials).
+  Backend: `Tenant`/`TenantKey`/`MonitoredSite`/`TenantCredential` Prisma
+  models (cascade deletes) + 7 route handlers under `/api/admin/*`
+  (list/create/update/delete, key generate/revoke, site add/probe/remove,
+  credential add/remove) documented in `docs/api-contracts.md`. Ops:
+  smoke.sh gains an admin probe (20 total).
+
 ### Added - console iteration 11
 - **Report drift watch (Reports)** - a background loop snapshots every
   catalogued service's 7-day SLA through the C# reporting plane every 3

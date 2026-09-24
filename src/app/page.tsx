@@ -13,6 +13,7 @@ import { AiopsView } from '@/components/console/views/aiops'
 import { BillingView } from '@/components/console/views/billing'
 import { ReportsView } from '@/components/console/views/reports'
 import { SettingsView } from '@/components/console/views/settings'
+import { AdminView } from '@/components/console/views/admin'
 
 export default function Home() {
   const [client] = useState(
@@ -56,6 +57,8 @@ function RenderView({ view }: { view: string }) {
       return <ReportsView />
     case 'settings':
       return <SettingsView />
+    case 'admin':
+      return <AdminView />
     default:
       return <OverviewView />
   }
