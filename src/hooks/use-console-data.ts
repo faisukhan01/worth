@@ -224,6 +224,63 @@ export function useSettings() {
   })
 }
 
+// ---- SLA reports (C# reporting plane) ---------------------------------------
+
+export interface SlaReportPayload {
+  id: string
+  serviceId: string
+  from: string
+  to: string
+  sloTarget: number
+  summary: {
+    availabilityPct: number
+    totalDowntime: number
+    totalRequests: number
+    failedRequests: number
+    errorBudgetMinutes: number
+    errorBudgetPctRemaining: number
+    burnRate: number
+  }
+  daily: { date: string; uptimePct: number; requests: number; errors: number }[]
+  incidents: {
+    startedAt: string
+    endedAt: string
+    durationMinutes: number
+    estimatedFailedRequests: number
+    severity: string
+  }[]
+  generatedAt: string
+}
+
+export function useReports(serviceId: string) {
+  const params = new URLSearchParams({ limit: '12' })
+  if (serviceId) params.set('serviceId', serviceId)
+  return useQuery({
+    queryKey: ['reports', serviceId],
+    queryFn: () => getJson<{ reports: SlaReportPayload[]; count: number }>(`/api/reports?${params}`),
+    refetchInterval: 30_000,
+    placeholderData: (prev) => prev,
+    retry: 0,
+  })
+}
+
+export function useGenerateReport() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (req: { serviceId: string; windowDays: number; sloTarget: number }) => {
+      const res = await fetch('/api/reports', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(req),
+      })
+      const body = (await res.json().catch(() => ({}))) as { error?: string }
+      if (!res.ok) throw new Error(body.error ?? `request failed (${res.status})`)
+      return body as SlaReportPayload
+    },
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['reports'] }),
+  })
+}
+
 export function useIncidentAction() {
   const qc = useQueryClient()
   return useMutation({

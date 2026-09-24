@@ -12,15 +12,20 @@ export const GATEWAY_URL = process.env.LODESTAR_GATEWAY_URL ?? 'http://127.0.0.1
 export const AIOPS_URL = process.env.LODESTAR_AIOPS_URL ?? 'http://127.0.0.1:3200'
 export const BILLING_URL = process.env.LODESTAR_BILLING_URL ?? 'http://127.0.0.1:4100'
 export const REPORTING_URL = process.env.LODESTAR_REPORTING_URL ?? 'http://127.0.0.1:4200'
-const API_KEY = process.env.LODESTAR_API_KEY ?? 'pg_live_demo_key'
+export const API_KEY = process.env.LODESTAR_API_KEY ?? 'pg_live_demo_key'
 const TIMEOUT_MS = 2500
 
-async function fetchJson<T>(url: string, timeoutMs = TIMEOUT_MS): Promise<T | null> {
+async function fetchJson<T>(
+  url: string,
+  timeoutMs = TIMEOUT_MS,
+  init: RequestInit = {},
+): Promise<T | null> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const res = await fetch(url, {
-      headers: { 'x-api-key': API_KEY, accept: 'application/json' },
+      ...init,
+      headers: { 'x-api-key': API_KEY, accept: 'application/json', ...init.headers },
       signal: controller.signal,
       cache: 'no-store',
     })
@@ -117,6 +122,57 @@ export const billing = {
 
 export const reporting = {
   health: () => fetchJson<{ status: string; service: string }>(`${REPORTING_URL}/v1/health`, 1500),
+  sla: (body: SlaReportRequest) =>
+    fetchJson<SlaReport>(`${REPORTING_URL}/v1/reports/sla`, 4000, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  reports: async (serviceId: string, limit: number) => {
+    const q = new URLSearchParams({ limit: String(limit) })
+    if (serviceId) q.set('serviceId', serviceId)
+    // The reporting plane returns a bare JSON array; normalize defensively.
+    const raw = await fetchJson<unknown>(`${REPORTING_URL}/v1/reports?${q}`, 2500)
+    if (!raw) return null
+    const list = Array.isArray(raw)
+      ? raw
+      : ((raw as { reports?: unknown }).reports as unknown[] | undefined) ?? []
+    return { reports: list as SlaReport[], count: list.length }
+  },
+}
+
+/** POST /v1/reports/sla request body (Lodestar.Reporting.Models.SlaReportRequest). */
+export interface SlaReportRequest {
+  serviceId: string
+  from: string // ISO-8601, inclusive
+  to: string // ISO-8601, exclusive
+  sloTarget?: number
+}
+
+export interface SlaReport {
+  id: string
+  serviceId: string
+  from: string
+  to: string
+  sloTarget: number
+  summary: {
+    availabilityPct: number
+    totalDowntime: number
+    totalRequests: number
+    failedRequests: number
+    errorBudgetMinutes: number
+    errorBudgetPctRemaining: number
+    burnRate: number
+  }
+  daily: { date: string; uptimePct: number; requests: number; errors: number }[]
+  incidents: {
+    startedAt: string
+    endedAt: string
+    durationMinutes: number
+    estimatedFailedRequests: number
+    severity: 'critical' | 'major' | 'minor'
+  }[]
+  generatedAt: string
 }
 
 export interface BillingUsageCurrent {

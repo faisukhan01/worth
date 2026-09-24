@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import {
   Activity, BrainCircuit, CreditCard, LayoutDashboard, ScrollText,
   Settings, Siren, Boxes, Search, RefreshCw, ChevronRight,
-  CircleHelp, Radar,
+  CircleHelp, Radar, FileBarChart,
 } from 'lucide-react'
 import { Command, CommandDialog, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { Button } from '@/components/ui/button'
@@ -22,6 +22,7 @@ const VIEW_ICONS: Record<ViewKey, React.ComponentType<{ className?: string }>> =
   alerts: Siren,
   aiops: BrainCircuit,
   billing: CreditCard,
+  reports: FileBarChart,
   settings: Settings,
 }
 

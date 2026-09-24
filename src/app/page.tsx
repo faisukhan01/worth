@@ -11,6 +11,7 @@ import { LogsView } from '@/components/console/views/logs'
 import { AlertsView } from '@/components/console/views/alerts'
 import { AiopsView } from '@/components/console/views/aiops'
 import { BillingView } from '@/components/console/views/billing'
+import { ReportsView } from '@/components/console/views/reports'
 import { SettingsView } from '@/components/console/views/settings'
 
 export default function Home() {
@@ -51,6 +52,8 @@ function RenderView({ view }: { view: string }) {
       return <AiopsView />
     case 'billing':
       return <BillingView />
+    case 'reports':
+      return <ReportsView />
     case 'settings':
       return <SettingsView />
     default:

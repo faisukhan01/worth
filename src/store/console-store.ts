@@ -10,6 +10,7 @@ export type ViewKey =
   | 'alerts'
   | 'aiops'
   | 'billing'
+  | 'reports'
   | 'settings'
 
 export const VIEWS: { key: ViewKey; label: string; hint: string }[] = [
@@ -20,6 +21,7 @@ export const VIEWS: { key: ViewKey; label: string; hint: string }[] = [
   { key: 'alerts', label: 'Alerts', hint: 'Rules & incidents' },
   { key: 'aiops', label: 'AIOps', hint: 'Anomalies & forecasts' },
   { key: 'billing', label: 'Usage', hint: 'Metering & plan' },
+  { key: 'reports', label: 'Reports', hint: 'SLA & exports' },
   { key: 'settings', label: 'Settings', hint: 'Keys, team, org' },
 ]
 

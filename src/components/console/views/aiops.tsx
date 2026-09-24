@@ -209,6 +209,14 @@ export function AiopsView() {
                 return (
                   <div key={h.service} className="flex items-center gap-3 rounded-lg border bg-card/40 px-3 py-2">
                     <span className="font-mono text-[11px]">{h.service}</span>
+                    {(h as { kind?: string }).kind === 'host' && (
+                      <span
+                        className="rounded border border-muted-foreground/30 bg-muted/40 px-1 font-mono text-[9px] uppercase text-muted-foreground"
+                        title="aggregated host telemetry from the C pulseagent (real /proc) plus the simulated host"
+                      >
+                        host
+                      </span>
+                    )}
                     <div className="ml-auto flex w-40 items-center gap-2">
                       <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
                         <div

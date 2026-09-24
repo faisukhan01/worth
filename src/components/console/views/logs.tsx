@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { useLogs } from '@/hooks/use-console-data'
 import { EmptyState } from '@/components/console/primitives'
 import { fmtClock } from '@/lib/format'
@@ -10,10 +10,69 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
-import { Pause, Play, Terminal } from 'lucide-react'
+import { toast } from 'sonner'
+import { Pause, Play, Terminal, Pin, X } from 'lucide-react'
 
 const LEVELS = ['', 'debug', 'info', 'warn', 'error', 'fatal']
 const SERVICES = ['', 'api-gateway', 'checkout-service', 'auth-service', 'search-cluster', 'billing-worker', 'edge-cdn']
+
+// ---- saved searches (pinned filter presets, persisted in localStorage) ------
+
+interface SavedSearch {
+  id: string
+  label: string
+  level: string
+  service: string
+  query: string
+}
+
+const LS_KEY = 'lodestar.saved-searches.v1'
+
+// Tiny external store so the chips survive reloads without setState-in-effect.
+let savedCache: SavedSearch[] | null = null
+const savedListeners = new Set<() => void>()
+const SAVED_EMPTY: SavedSearch[] = []
+
+function readSaved(): SavedSearch[] {
+  if (savedCache) return savedCache
+  try {
+    const raw = localStorage.getItem(LS_KEY)
+    const parsed = raw ? (JSON.parse(raw) as unknown) : []
+    savedCache = Array.isArray(parsed) ? (parsed as SavedSearch[]).slice(0, 12) : []
+  } catch {
+    savedCache = []
+  }
+  return savedCache
+}
+
+function writeSaved(next: SavedSearch[]) {
+  savedCache = next
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(next))
+  } catch {
+    /* storage full/blocked - chips stay session-only */
+  }
+  savedListeners.forEach((l) => l())
+}
+
+function subscribeSaved(l: () => void) {
+  savedListeners.add(l)
+  window.addEventListener('storage', l)
+  return () => {
+    savedListeners.delete(l)
+    window.removeEventListener('storage', l)
+  }
+}
+
+function useSavedSearches() {
+  const saved = useSyncExternalStore(subscribeSaved, readSaved, () => SAVED_EMPTY)
+  return {
+    saved,
+    save: (s: Omit<SavedSearch, 'id'>) =>
+      writeSaved([...readSaved().filter((x) => x.label !== s.label), { ...s, id: crypto.randomUUID() }]),
+    remove: (id: string) => writeSaved(readSaved().filter((x) => x.id !== id)),
+  }
+}
 
 const LEVEL_STYLE: Record<string, { color: string; chip: string }> = {
   debug: { color: 'var(--muted-foreground)', chip: 'bg-muted text-muted-foreground' },
@@ -27,6 +86,7 @@ const LEVEL_STYLE: Record<string, { color: string; chip: string }> = {
 export function LogsView() {
   const { data, isLoading } = useLogs()
   const { logLevel, logService, logQuery, paused, setLogFilter, togglePaused } = useConsole()
+  const { saved, save, remove } = useSavedSearches()
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // Auto-follow tail unless paused
@@ -37,6 +97,13 @@ export function LogsView() {
   }, [data, paused])
 
   const logs = data?.logs ?? []
+  const filtersActive = !!(logLevel || logService || logQuery)
+
+  const pinCurrent = () => {
+    const label = describeFilter(logLevel, logService, logQuery)
+    save({ label, level: logLevel, service: logService, query: logQuery })
+    toast.success('Search pinned', { description: label })
+  }
 
   return (
     <div className="space-y-4">
@@ -84,12 +151,64 @@ export function LogsView() {
               ))}
             </SelectContent>
           </Select>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 text-xs"
+            onClick={pinCurrent}
+            disabled={!filtersActive}
+            title={filtersActive ? 'Pin this filter combination' : 'Set a filter first'}
+          >
+            <Pin className="h-3 w-3" />
+            Pin
+          </Button>
           <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={togglePaused}>
             {paused ? <Play className="h-3 w-3" /> : <Pause className="h-3 w-3" />}
             {paused ? 'Resume' : 'Pause'}
           </Button>
         </div>
       </div>
+
+      {/* saved searches chips */}
+      {saved.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5" aria-label="saved searches">
+          <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <Pin className="h-2.5 w-2.5" />
+            pinned
+          </span>
+          {saved.map((s) => {
+            const active = s.level === logLevel && s.service === logService && s.query === logQuery
+            return (
+              <span
+                key={s.id}
+                className={cn(
+                  'group inline-flex h-7 items-center gap-1 rounded-full border pl-2.5 pr-1 text-[11px] transition-colors',
+                  active
+                    ? 'border-primary/40 bg-primary/10 text-primary'
+                    : 'bg-card/60 text-muted-foreground hover:border-ring/50 hover:text-foreground',
+                )}
+              >
+                <button
+                  onClick={() =>
+                    setLogFilter({ level: s.level, service: s.service, query: s.query })
+                  }
+                  className="max-w-56 truncate font-mono"
+                  title={`${s.label} — apply`}
+                >
+                  {s.label}
+                </button>
+                <button
+                  onClick={() => remove(s.id)}
+                  aria-label={`remove saved search ${s.label}`}
+                  className="rounded-full p-0.5 opacity-40 transition-opacity hover:bg-accent hover:opacity-100"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            )
+          })}
+        </div>
+      )}
 
       <div className="card-surface overflow-hidden">
         <div
@@ -178,4 +297,9 @@ function LevelDistribution({ logs }: { logs: { level: string }[] }) {
       </span>
     </span>
   )
+}
+
+/** Human label for a pinned filter, e.g. "error × checkout × timeout". */
+function describeFilter(level: string, service: string, query: string): string {
+  return [level, service, query].filter(Boolean).join(' × ') || 'all entries'
 }

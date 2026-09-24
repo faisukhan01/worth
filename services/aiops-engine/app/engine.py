@@ -20,6 +20,7 @@ log = logging.getLogger("aiops.engine")
 WINDOW = 240          # rolling samples kept per series
 PULL_INTERVAL = 5.0   # seconds between gateway pulls
 SERVICE_KEYS = ("request.rate", "error.rate", "latency.p99")
+HOST_SERVICE = "edge-host"  # pulseagent/host telemetry is one pseudo-service
 
 
 def _now_iso() -> str:
@@ -27,8 +28,15 @@ def _now_iso() -> str:
 
 
 def _service_of(series: dict[str, Any]) -> str:
+    """Collapse a series into its owning service.
+
+    Service metrics carry a ``service`` tag. Host telemetry (C pulseagent or
+    the gateway's simulated host) carries only ``host``/``source``; every such
+    series is grouped under the single ``edge-host`` pseudo-service so raw
+    host UUIDs never leak into health scores or forecasts.
+    """
     tags = series.get("tags") or {}
-    return tags.get("service") or tags.get("host") or "host"
+    return tags.get("service") or HOST_SERVICE
 
 
 class Engine:
@@ -197,14 +205,19 @@ class Engine:
     def _finalize_health(h: dict) -> dict:
         score = max(0, round(100 - h["penalty"]))
         status = "healthy" if score >= 85 else ("degraded" if score >= 60 else "critical")
-        return {"service": h["service"], "score": score, "status": status,
+        return {"service": h["service"], "kind": "host" if h["service"] == HOST_SERVICE else "service",
+                "score": score, "status": status,
                 "notes": h["notes"][:3]}
 
     def _build_forecasts(self, snapshot: dict) -> list[dict]:
         out: list[dict] = []
         for key, (values, stamps) in snapshot.items():
-            name, service, _source = key.split("\x1f")
+            name, service, source = key.split("\x1f")
             if name not in ("cpu.usage", "request.rate") or len(values) < 30:
+                continue
+            # Host cpu.usage arrives from both the real agent and the gateway's
+            # simulated host; forecast the real agent feed only.
+            if service == HOST_SERVICE and name == "cpu.usage" and source == "simulated":
                 continue
             steps = forecast(np.asarray(values[-120:], dtype=float), horizon=12)
             if not steps or not stamps:
