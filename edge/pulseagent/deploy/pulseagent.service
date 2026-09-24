@@ -1,0 +1,17 @@
+[Unit]
+Description=Lodestar pulseagent - edge telemetry agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/pulseagent
+Environment=PULSE_GATEWAY_URL=http://127.0.0.1:3100
+Environment=PULSE_INTERVAL_MS=2000
+Restart=always
+RestartSec=5
+Nice=10
+CPUSchedulingPolicy=batch
+
+[Install]
+WantedBy=multi-user.target
