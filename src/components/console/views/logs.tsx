@@ -131,14 +131,51 @@ export function LogsView() {
         </div>
       </div>
 
-      <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-4 text-[11px] text-muted-foreground">
         <span className={cn('flex items-center gap-1.5', paused && 'text-warn')}>
           <span className={cn('h-1.5 w-1.5 rounded-full', paused ? 'bg-warn' : 'live-dot bg-ok')} />
           {paused ? 'stream paused' : 'tailing every 5s'}
         </span>
         <span>newest first · {logs.length} shown</span>
+        <LevelDistribution logs={logs} />
         <span className="ml-auto">retention: 8000 entries ring buffer</span>
       </div>
     </div>
+  )
+}
+
+function LevelDistribution({ logs }: { logs: { level: string }[] }) {
+  const order: { key: string; color: string }[] = [
+    { key: 'debug', color: 'var(--muted-foreground)' },
+    { key: 'info', color: 'var(--ok)' },
+    { key: 'warn', color: 'var(--warn)' },
+    { key: 'error', color: 'var(--crit)' },
+    { key: 'fatal', color: 'var(--crit)' },
+  ]
+  const counts = new Map<string, number>()
+  for (const l of logs) counts.set(l.level, (counts.get(l.level) ?? 0) + 1)
+  const total = logs.length || 1
+
+  return (
+    <span className="hidden items-center gap-2 md:flex" title="level distribution of the current view">
+      <span className="flex h-1.5 w-32 overflow-hidden rounded-full bg-muted">
+        {order.map(({ key, color }) => {
+          const n = (counts.get(key) ?? 0) / total
+          return n > 0 ? (
+            <span
+              key={key}
+              className="h-full transition-all"
+              style={{ width: `${n * 100}%`, background: color, opacity: key === 'fatal' ? 1 : 0.85 }}
+            />
+          ) : null
+        })}
+      </span>
+      <span className="tabular">
+        {order
+          .filter(({ key }) => (counts.get(key) ?? 0) > 0)
+          .map(({ key }) => `${counts.get(key)} ${key}`)
+          .join(' · ')}
+      </span>
+    </span>
   )
 }

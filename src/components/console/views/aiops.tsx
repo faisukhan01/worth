@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { useAiops } from '@/hooks/use-console-data'
+import { useAiops, usePromoteIncident } from '@/hooks/use-console-data'
 import { StatusPill, EmptyState, TONE_COLOR, SectionHeader, statusTone } from '@/components/console/primitives'
 import { AreaChart, ConfidenceBar } from '@/components/console/charts'
 import { fmtNum, timeAgo, fmtClock } from '@/lib/format'
@@ -14,7 +14,9 @@ const FORECAST_COLOR = 'var(--chart-4)'
 
 export function AiopsView() {
   const { data, isLoading } = useAiops()
+  const promote = usePromoteIncident()
   const [forecastIdx, setForecastIdx] = useState(0)
+  const [promoted, setPromoted] = useState<Set<string>>(new Set())
 
   if (isLoading && !data) {
     return (
@@ -77,7 +79,14 @@ export function AiopsView() {
                       <span className="text-muted-foreground">·</span>
                       <span className="font-mono text-[11px]">{a.metric}</span>
                     </div>
-                    <StatusPill status={a.severity} />
+                    <div className="flex items-center gap-1.5">
+                      {a.active === false && (
+                        <span className="rounded border bg-muted/40 px-1 py-px text-[9px] uppercase tracking-wide text-muted-foreground">
+                          recent
+                        </span>
+                      )}
+                      <StatusPill status={a.severity} />
+                    </div>
                   </div>
                   <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">{a.message}</p>
                   <div className="mt-2 flex items-center justify-between">
@@ -99,14 +108,36 @@ export function AiopsView() {
                     </div>
                   </div>
                   <button
-                    className="mt-2 w-full rounded-md border border-dashed py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-ring hover:text-foreground"
-                    onClick={() =>
-                      toast.success('Promoted to incident', {
-                        description: `${a.metric} on ${a.service} is now tracked in the register.`,
-                      })
-                    }
+                    className="mt-2 w-full rounded-md border border-dashed py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-ring hover:text-foreground disabled:opacity-50"
+                    disabled={promote.isPending || promoted.has(a.id)}
+                    onClick={() => {
+                      promote.mutate(
+                        {
+                          service: a.service,
+                          metric: a.metric,
+                          severity: a.severity,
+                          message: a.message,
+                          baseline: a.baseline,
+                          observed: a.observed,
+                        },
+                        {
+                          onSuccess: (r) => {
+                            setPromoted((prev) => new Set(prev).add(a.id))
+                            toast.success(r.deduplicated ? 'Already in the register' : 'Promoted to incident', {
+                              description: `${a.metric} on ${a.service} is now tracked under Alerts.`,
+                            })
+                          },
+                          onError: (e: Error) =>
+                            toast.error('Promotion rejected', { description: e.message }),
+                        },
+                      )
+                    }}
                   >
-                    Promote to incident
+                    {promoted.has(a.id)
+                      ? 'In the register →'
+                      : promote.isPending
+                        ? 'Promoting…'
+                        : 'Promote to incident'}
                   </button>
                 </div>
               ))

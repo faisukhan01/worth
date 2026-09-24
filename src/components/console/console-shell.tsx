@@ -86,12 +86,15 @@ export function ConsoleShell({ children }: { children: React.ReactNode }) {
                   onClick={() => setView(v.key)}
                   aria-current={active ? 'page' : undefined}
                   className={cn(
-                    'group flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13px] transition-colors',
+                    'group relative flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13px] transition-colors',
                     active
                       ? 'bg-accent font-medium text-accent-foreground'
                       : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
                   )}
                 >
+                  {active && (
+                    <span className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-primary" />
+                  )}
                   <Icon className={cn('h-4 w-4 shrink-0', active && 'text-primary')} />
                   <span className="flex-1">{v.label}</span>
                   {active && <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}

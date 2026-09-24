@@ -53,6 +53,7 @@ export interface AiopsAnomaly {
   observed: number
   message: string
   startedAt: string
+  active?: boolean
 }
 
 export interface AiopsPayload {
@@ -225,6 +226,41 @@ export function useIncidentAction() {
         throw new Error(body.error ?? `request failed (${res.status})`)
       }
       return res.json()
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['alerts'] })
+      void qc.invalidateQueries({ queryKey: ['overview'] })
+    },
+  })
+}
+
+export function usePromoteIncident() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (anomaly: {
+      service: string
+      metric: string
+      severity: string
+      message: string
+      baseline: number
+      observed: number
+    }) => {
+      const res = await fetch('/api/incidents', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          serviceKey: anomaly.service,
+          title: `${anomaly.metric} ${anomaly.observed >= anomaly.baseline ? 'spike' : 'drop'} detected by AIOps`,
+          severity: anomaly.severity,
+          detail: anomaly.message,
+          source: 'aiops',
+        }),
+      })
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string }
+        throw new Error(body.error ?? `request failed (${res.status})`)
+      }
+      return res.json() as Promise<{ deduplicated: boolean }>
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['alerts'] })
