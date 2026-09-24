@@ -74,6 +74,19 @@ bash scripts/up-platform.sh billing      # just one plane
 tail -f logs/<plane>.log                 # per-plane logs land in <repo>/logs/
 ```
 
+### Smoke probe
+
+`scripts/smoke.sh` (or `make smoke`) verifies every plane and console API in
+one shot: five health endpoints, seven console API GETs, and a gateway ingest
+-> query round-trip. Exit code 0 means core is green; code-tier planes warn
+but never fail the run.
+
+```sh
+make smoke                 # read-only probes
+make smoke SMOKE=deep      # additionally generates a 7d SLA report (C# write path)
+scripts/smoke.sh           # same as make smoke
+```
+
 ## Docker Compose
 
 ```sh

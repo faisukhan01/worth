@@ -303,6 +303,58 @@ export function useIncidentAction() {
   })
 }
 
+/** Assign / unassign an on-call engineer on a single incident. */
+export function useAssignIncident() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ id, assignee }: { id: string; assignee: string | null }) => {
+      const res = await fetch(`/api/incidents/${id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ assignee }),
+      })
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string }
+        throw new Error(body.error ?? `request failed (${res.status})`)
+      }
+      return res.json()
+    },
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ['alerts'] }),
+  })
+}
+
+export interface BulkIncidentResult {
+  updated: number
+  results: { id: string; ok: boolean; error?: string }[]
+}
+
+/** Bulk lifecycle transition and/or assignment over up to 50 incidents. */
+export function useBulkIncidentAction() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (payload: {
+      ids: string[]
+      action?: 'acknowledge' | 'mitigate' | 'resolve'
+      assignee?: string | null
+    }) => {
+      const res = await fetch('/api/incidents/bulk', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string }
+        throw new Error(body.error ?? `request failed (${res.status})`)
+      }
+      return (await res.json()) as BulkIncidentResult
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['alerts'] })
+      void qc.invalidateQueries({ queryKey: ['overview'] })
+    },
+  })
+}
+
 export function usePromoteIncident() {
   const qc = useQueryClient()
   return useMutation({

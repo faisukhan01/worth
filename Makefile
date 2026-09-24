@@ -81,6 +81,9 @@ lint: ## Lint every stack present on disk
 		&& cd services/aiops-engine && ruff check .; fi
 
 # ------------------------------------------------------------------- seed
+smoke: ## Probe all planes + console API (scripts/smoke.sh, add SMOKE=deep for write path)
+	bash scripts/smoke.sh $(if $(SMOKE),--deep,)
+
 .PHONY: seed
 seed: ## Seed the Prisma/SQLite database (requires the db:seed script)
 	bun run db:seed

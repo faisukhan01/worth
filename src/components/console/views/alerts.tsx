@@ -1,18 +1,19 @@
 'use client'
 
 import { useState } from 'react'
-import { useAlerts, useIncidentAction, useCreateRule, useTestRule, type OpenIncident } from '@/hooks/use-console-data'
+import { useAlerts, useIncidentAction, useCreateRule, useTestRule, useBulkIncidentAction, useAssignIncident, useSettings, type OpenIncident } from '@/hooks/use-console-data'
 import { StatusPill, EmptyState, TONE_COLOR, statusTone, SectionHeader } from '@/components/console/primitives'
 import { timeAgo } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Input } from '@/components/ui/input'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from 'sonner'
-import { BellRing, FlaskConical, Plus, ShieldCheck, Siren, Timer } from 'lucide-react'
+import { BellRing, FlaskConical, Plus, ShieldCheck, Siren, Timer, UserPlus } from 'lucide-react'
 
 interface TimelineEntry {
   ts: string
@@ -22,9 +23,14 @@ interface TimelineEntry {
 
 export function AlertsView() {
   const { data, isLoading } = useAlerts()
+  const { data: settings } = useSettings()
   const incidentAction = useIncidentAction()
   const testRule = useTestRule()
+  const bulk = useBulkIncidentAction()
+  const assignIncident = useAssignIncident()
   const [selected, setSelected] = useState<OpenIncident | null>(null)
+  const [checked, setChecked] = useState<Set<string>>(new Set())
+  const [assignPick, setAssignPick] = useState('')
 
   if (isLoading && !data) {
     return (
@@ -97,6 +103,68 @@ export function AlertsView() {
     )
   }
 
+  const team = settings?.team ?? []
+  const openIds = data.incidents.filter((i) => i.status !== 'resolved').map((i) => i.id)
+  const allChecked = openIds.length > 0 && openIds.every((id) => checked.has(id))
+
+  const toggleRow = (id: string) => {
+    setChecked((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleAll = () => {
+    setChecked(allChecked ? new Set() : new Set(openIds))
+  }
+
+  const summarize = (r: { updated: number; results: { ok: boolean }[] }, verb: string) => {
+    const skipped = r.results.length - r.updated
+    if (r.updated === 0) {
+      toast.info(`Nothing ${verb}`, { description: `${skipped} incident(s) were not in a state for that transition.` })
+    } else {
+      toast.success(`${verb} ${r.updated} incident(s)`, { description: skipped > 0 ? `${skipped} skipped (state conflict or missing).` : 'Register refreshed.' })
+    }
+  }
+
+  const bulkAct = (action: 'acknowledge' | 'mitigate' | 'resolve') => {
+    bulk.mutate(
+      { ids: [...checked], action },
+      {
+        onSuccess: (r) => {
+          summarize(r, action === 'acknowledge' ? 'Acknowledged' : action === 'mitigate' ? 'Mitigated' : 'Resolved')
+          setChecked(new Set())
+        },
+        onError: (e: Error) => toast.error('Bulk action failed', { description: e.message }),
+      },
+    )
+  }
+
+  const bulkAssign = (name: string | null) => {
+    bulk.mutate(
+      { ids: [...checked], assignee: name },
+      {
+        onSuccess: (r) => {
+          summarize(r, name ? `Assigned to ${name}` : 'Unassigned')
+          setChecked(new Set())
+        },
+        onError: (e: Error) => toast.error('Bulk assignment failed', { description: e.message }),
+      },
+    )
+  }
+
+  const assignOne = (id: string, name: string | null) => {
+    assignIncident.mutate(
+      { id, assignee: name },
+      {
+        onSuccess: () => toast.success(name ? `Assigned to ${name}` : 'Unassigned'),
+        onError: (e: Error) => toast.error('Assignment rejected', { description: e.message }),
+      },
+    )
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -124,6 +192,49 @@ export function AlertsView() {
         </TabsList>
 
         <TabsContent value="incidents" className="mt-3 space-y-2">
+          {/* Selection + bulk action bar */}
+          <div className="flex flex-wrap items-center gap-2 px-1">
+            <Checkbox
+              checked={allChecked}
+              onCheckedChange={toggleAll}
+              disabled={openIds.length === 0}
+              aria-label="Select all open incidents"
+            />
+            <span className="text-[11px] text-muted-foreground">
+              {checked.size > 0 ? `${checked.size} selected` : `${openIds.length} open · select for bulk actions`}
+            </span>
+            {checked.size > 0 && (
+              <div className="rise-in ml-auto flex flex-wrap items-center gap-1.5">
+                <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={bulk.isPending} onClick={() => bulkAct('acknowledge')}>
+                  Ack
+                </Button>
+                <Button size="sm" variant="outline" className="h-7 text-[11px]" disabled={bulk.isPending} onClick={() => bulkAct('mitigate')}>
+                  Mitigate
+                </Button>
+                <Button size="sm" variant="outline" className="h-7 text-[11px] text-ok hover:text-ok" disabled={bulk.isPending} onClick={() => bulkAct('resolve')}>
+                  Resolve
+                </Button>
+                <Select value={assignPick} onValueChange={(v) => { setAssignPick(''); bulkAssign(v === '__none' ? null : v) }} disabled={bulk.isPending}>
+                  <SelectTrigger className="h-7 w-40 gap-1 text-[11px]" aria-label="Bulk assign to team member">
+                    <UserPlus className="h-3 w-3 text-muted-foreground" />
+                    <SelectValue placeholder="Assign to…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {team.map((m) => (
+                      <SelectItem key={m.id} value={m.name} className="text-xs">
+                        {m.name}
+                        {m.onCall ? ' · on-call' : ''}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="__none" className="text-xs text-muted-foreground">Unassign</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button size="sm" variant="ghost" className="h-7 text-[11px] text-muted-foreground" onClick={() => setChecked(new Set())}>
+                  Clear
+                </Button>
+              </div>
+            )}
+          </div>
           {[...open, ...resolved.slice(0, 6)].map((i) => {
             const tone = statusTone(i.status === 'resolved' ? i.status : i.severity)
             let timeline: TimelineEntry[] = []
@@ -133,7 +244,7 @@ export function AlertsView() {
               timeline = []
             }
             return (
-              <div key={i.id} className="card-surface overflow-hidden">
+              <div key={i.id} className={cn('card-surface overflow-hidden', checked.has(i.id) && 'ring-1 ring-primary/40')}>
                 <div
                   role="button"
                   tabIndex={0}
@@ -147,6 +258,16 @@ export function AlertsView() {
                     }
                   }}
                 >
+                  {i.status !== 'resolved' && (
+                    <span className="mt-0.5 shrink-0" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={checked.has(i.id)}
+                        onCheckedChange={() => toggleRow(i.id)}
+                        aria-label={`Select incident ${i.title}`}
+                        className="mt-1.5"
+                      />
+                    </span>
+                  )}
                   <span className="mt-1 h-8 w-1 shrink-0 rounded-full" style={{ background: TONE_COLOR[tone] }} />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
@@ -183,6 +304,28 @@ export function AlertsView() {
 
                 {selected?.id === i.id && (
                   <div className="border-t bg-muted/10 px-6 py-4">
+                    <div className="mb-3 flex flex-wrap items-center gap-2">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Assignee</span>
+                      <Select
+                        value={i.assignee ?? '__none'}
+                        onValueChange={(v) => assignOne(i.id, v === '__none' ? null : v)}
+                        disabled={assignIncident.isPending}
+                      >
+                        <SelectTrigger className="h-7 w-44 text-[11px]">
+                          <SelectValue placeholder="Unassigned" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {team.map((m) => (
+                            <SelectItem key={m.id} value={m.name} className="text-xs">
+                              {m.name}
+                              {m.onCall ? ' · on-call' : ''}
+                            </SelectItem>
+                          ))}
+                          <SelectItem value="__none" className="text-xs text-muted-foreground">Unassigned</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <UserPlus className="h-3 w-3 text-muted-foreground" />
+                    </div>
                     <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Timeline</div>
                     <ol className="relative space-y-3 border-l pl-4">
                       {timeline.map((t, idx) => (
