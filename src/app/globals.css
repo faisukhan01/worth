@@ -127,7 +127,10 @@
   * {
     @apply border-border outline-ring/50;
   }
-  html {
+  :root {
+    color-scheme: light;
+  }
+  .dark {
     color-scheme: dark;
   }
   body {

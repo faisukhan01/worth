@@ -365,3 +365,57 @@ export function useCreateRule() {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['alerts'] }),
   })
 }
+
+export interface RuleEvaluation {
+  serviceKey: string
+  metric: string
+  comparator: string
+  threshold: number
+  windowMinutes: number
+  severity: string
+  currentValue: number | null
+  sampleCount: number
+  evaluable: boolean
+  wouldFire: boolean
+  reason: string
+  evaluatedAt: string
+}
+
+export interface RuleTestResult {
+  evaluation: RuleEvaluation
+  ruleId?: string | null
+  drill?: { id: string; deduplicated: boolean; title: string }
+}
+
+/**
+ * Test-fire an alert rule against live gateway telemetry (evaluate) or
+ * register a drill incident (drill mode).
+ */
+export function useTestRule() {
+  return useMutation({
+    mutationFn: async (
+      payload:
+        | { ruleId: string; mode?: 'evaluate' | 'drill' }
+        | {
+            serviceKey: string
+            metric: string
+            comparator: string
+            threshold: number
+            windowMinutes: number
+            severity: string
+            mode?: 'evaluate' | 'drill'
+          },
+    ) => {
+      const res = await fetch('/api/alerts/rules/test', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string }
+        throw new Error(body.error ?? `request failed (${res.status})`)
+      }
+      return (await res.json()) as RuleTestResult
+    },
+  })
+}

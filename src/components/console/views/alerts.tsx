@@ -1,9 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import { useAlerts, useIncidentAction, useCreateRule, type OpenIncident } from '@/hooks/use-console-data'
+import { useAlerts, useIncidentAction, useCreateRule, useTestRule, type OpenIncident } from '@/hooks/use-console-data'
 import { StatusPill, EmptyState, TONE_COLOR, statusTone, SectionHeader } from '@/components/console/primitives'
 import { timeAgo } from '@/lib/format'
+import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Input } from '@/components/ui/input'
@@ -11,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from 'sonner'
-import { BellRing, Plus, ShieldCheck, Siren, Timer } from 'lucide-react'
+import { BellRing, FlaskConical, Plus, ShieldCheck, Siren, Timer } from 'lucide-react'
 
 interface TimelineEntry {
   ts: string
@@ -22,6 +23,7 @@ interface TimelineEntry {
 export function AlertsView() {
   const { data, isLoading } = useAlerts()
   const incidentAction = useIncidentAction()
+  const testRule = useTestRule()
   const [selected, setSelected] = useState<OpenIncident | null>(null)
 
   if (isLoading && !data) {
@@ -47,6 +49,52 @@ export function AlertsView() {
       },
     )
     if (selected?.id === id) setSelected(null)
+  }
+
+  /** Evaluate a saved rule, then offer a one-click drill from the toast. */
+  const testSavedRule = (rule: { id: string; serviceKey: string; metric: string; comparator: string; threshold: number; severity: string }) => {
+    testRule.mutate(
+      { ruleId: rule.id },
+      {
+        onSuccess: (result) => {
+          const e = result.evaluation
+          if (!e.evaluable) {
+            toast.warning('Rule could not be evaluated', { description: e.reason })
+            return
+          }
+          const verdict = e.wouldFire ? 'WOULD FIRE' : 'would not fire'
+          toast(`Test: ${verdict}`, {
+            duration: 10_000,
+            description: `${rule.metric} on ${rule.serviceKey} · current ${e.currentValue} vs ${rule.comparator} ${rule.threshold}`,
+            ...(e.wouldFire
+              ? {
+                  action: {
+                    label: 'Fire drill',
+                    onClick: () => fireDrill(rule.id),
+                  },
+                }
+              : {}),
+          })
+        },
+        onError: (err: Error) => toast.error('Test failed', { description: err.message }),
+      },
+    )
+  }
+
+  const fireDrill = (ruleId: string) => {
+    testRule.mutate(
+      { ruleId, mode: 'drill' },
+      {
+        onSuccess: (result) => {
+          if (result.drill?.deduplicated) {
+            toast.info('Drill already open', { description: 'Resolve the existing drill incident before re-firing.' })
+          } else {
+            toast.success('Drill incident registered', { description: 'Find it under Incidents tagged DRILL.' })
+          }
+        },
+        onError: (err: Error) => toast.error('Drill rejected', { description: err.message }),
+      },
+    )
   }
 
   return (
@@ -172,7 +220,8 @@ export function AlertsView() {
                   <th className="px-3 py-2.5 font-medium">Condition</th>
                   <th className="hidden px-3 py-2.5 font-medium sm:table-cell">Window</th>
                   <th className="px-3 py-2.5 font-medium">Severity</th>
-                  <th className="px-4 py-2.5 text-right font-medium">State</th>
+                  <th className="px-3 py-2.5 font-medium">State</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Test-fire</th>
                 </tr>
               </thead>
               <tbody>
@@ -188,15 +237,31 @@ export function AlertsView() {
                     <td className="px-3 py-2.5">
                       <StatusPill status={r.severity} />
                     </td>
-                    <td className="px-4 py-2.5 text-right">
+                    <td className="px-3 py-2.5">
                       <span className={r.enabled ? 'text-[11px] text-ok' : 'text-[11px] text-muted-foreground'}>
                         {r.enabled ? 'armed' : 'muted'}
                       </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 gap-1 px-2 text-[11px]"
+                        disabled={testRule.isPending}
+                        onClick={() => testSavedRule(r)}
+                        aria-label={`Test-fire rule ${r.metric} on ${r.serviceKey}`}
+                      >
+                        <FlaskConical className={cn('h-3 w-3', testRule.isPending && 'animate-pulse')} />
+                        Test
+                      </Button>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            <div className="border-t bg-muted/20 px-4 py-2 text-[10px] text-muted-foreground">
+              Test evaluates the rule against live gateway telemetry (read-only). If it would fire, you can register a DRILL incident from the toast to rehearse ack/mitigate/resolve.
+            </div>
           </div>
         </TabsContent>
       </Tabs>
@@ -220,7 +285,9 @@ function StatCard({ icon, label, value, tone }: { icon: React.ReactNode; label: 
 
 function NewRuleDialog() {
   const create = useCreateRule()
+  const testRule = useTestRule()
   const [open, setOpen] = useState(false)
+  const [preview, setPreview] = useState<RuleEvaluation | null>(null)
   const [form, setForm] = useState({
     serviceKey: 'api-gateway',
     metric: 'latency.p99',
@@ -229,6 +296,25 @@ function NewRuleDialog() {
     windowMinutes: '5',
     severity: 'warning',
   })
+
+  const clearPreview = () => setPreview(null)
+
+  const runPreview = () => {
+    testRule.mutate(
+      {
+        serviceKey: form.serviceKey,
+        metric: form.metric,
+        comparator: form.comparator,
+        threshold: Number(form.threshold),
+        windowMinutes: Number(form.windowMinutes) || 5,
+        severity: form.severity,
+      },
+      {
+        onSuccess: (result) => setPreview(result.evaluation),
+        onError: (e: Error) => toast.error('Evaluation failed', { description: e.message }),
+      },
+    )
+  }
 
   const submit = () => {
     create.mutate(
@@ -244,6 +330,7 @@ function NewRuleDialog() {
         onSuccess: () => {
           toast.success('Rule armed', { description: `${form.metric} ${form.comparator} ${form.threshold} on ${form.serviceKey}` })
           setOpen(false)
+          setPreview(null)
         },
         onError: (e: Error) => toast.error('Rejected', { description: e.message }),
       },
@@ -251,7 +338,7 @@ function NewRuleDialog() {
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setPreview(null) }}>
       <DialogTrigger asChild>
         <Button size="sm" className="h-8 gap-1.5 text-xs">
           <Plus className="h-3.5 w-3.5" /> New rule
@@ -263,7 +350,7 @@ function NewRuleDialog() {
         </DialogHeader>
         <div className="grid gap-3 py-2">
           <Labeled label="Service">
-            <Select value={form.serviceKey} onValueChange={(v) => setForm({ ...form, serviceKey: v })}>
+            <Select value={form.serviceKey} onValueChange={(v) => { clearPreview(); setForm({ ...form, serviceKey: v }) }}>
               <SelectTrigger className="h-8 font-mono text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {['api-gateway', 'checkout-service', 'auth-service', 'search-cluster', 'billing-worker', 'edge-cdn'].map((s) => (
@@ -274,7 +361,7 @@ function NewRuleDialog() {
           </Labeled>
           <div className="grid grid-cols-3 gap-2">
             <Labeled label="Metric">
-              <Select value={form.metric} onValueChange={(v) => setForm({ ...form, metric: v })}>
+              <Select value={form.metric} onValueChange={(v) => { clearPreview(); setForm({ ...form, metric: v }) }}>
                 <SelectTrigger className="h-8 font-mono text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {['error.rate', 'latency.p99', 'latency.p95', 'request.rate', 'cpu.usage'].map((m) => (
@@ -284,7 +371,7 @@ function NewRuleDialog() {
               </Select>
             </Labeled>
             <Labeled label="Comparator">
-              <Select value={form.comparator} onValueChange={(v) => setForm({ ...form, comparator: v })}>
+              <Select value={form.comparator} onValueChange={(v) => { clearPreview(); setForm({ ...form, comparator: v }) }}>
                 <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="above">above</SelectItem>
@@ -293,15 +380,15 @@ function NewRuleDialog() {
               </Select>
             </Labeled>
             <Labeled label="Threshold">
-              <Input className="h-8 text-xs tabular" value={form.threshold} onChange={(e) => setForm({ ...form, threshold: e.target.value })} inputMode="decimal" />
+              <Input className="h-8 text-xs tabular" value={form.threshold} onChange={(e) => { clearPreview(); setForm({ ...form, threshold: e.target.value }) }} inputMode="decimal" />
             </Labeled>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <Labeled label="Window (minutes)">
-              <Input className="h-8 text-xs tabular" value={form.windowMinutes} onChange={(e) => setForm({ ...form, windowMinutes: e.target.value })} inputMode="numeric" />
+              <Input className="h-8 text-xs tabular" value={form.windowMinutes} onChange={(e) => { clearPreview(); setForm({ ...form, windowMinutes: e.target.value }) }} inputMode="numeric" />
             </Labeled>
             <Labeled label="Severity">
-              <Select value={form.severity} onValueChange={(v) => setForm({ ...form, severity: v })}>
+              <Select value={form.severity} onValueChange={(v) => { clearPreview(); setForm({ ...form, severity: v }) }}>
                 <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {['info', 'warning', 'critical'].map((s) => (
@@ -310,6 +397,47 @@ function NewRuleDialog() {
                 </SelectContent>
               </Select>
             </Labeled>
+          </div>
+
+          {/* Live dry-run against gateway telemetry before arming */}
+          <div className="rounded-lg border bg-muted/20 p-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Dry-run preview</span>
+              <Button size="sm" variant="outline" className="h-6 gap-1 px-2 text-[10px]" disabled={testRule.isPending || !form.threshold} onClick={runPreview}>
+                <FlaskConical className={cn('h-3 w-3', testRule.isPending && 'animate-pulse')} />
+                {testRule.isPending ? 'Evaluating…' : 'Evaluate now'}
+              </Button>
+            </div>
+            {preview && (
+              <div className="mt-2 space-y-1">
+                <div className="flex items-center gap-2 text-[11px]">
+                  {preview.evaluable ? (
+                    <span
+                      className="rounded px-1.5 py-px font-semibold"
+                      style={{
+                        background: preview.wouldFire ? TONE_COLOR.crit : TONE_COLOR.ok,
+                        color: 'white',
+                      }}
+                    >
+                      {preview.wouldFire ? 'WOULD FIRE' : 'quiet'}
+                    </span>
+                  ) : (
+                    <span className="rounded bg-muted px-1.5 py-px font-semibold text-muted-foreground">no data</span>
+                  )}
+                  {preview.evaluable && (
+                    <span className="tabular">
+                      current <b>{preview.currentValue}</b> vs {preview.comparator} {preview.threshold}
+                    </span>
+                  )}
+                </div>
+                <div className="text-[10px] text-muted-foreground">{preview.reason}</div>
+              </div>
+            )}
+            {!preview && (
+              <p className="mt-1.5 text-[10px] text-muted-foreground">
+                Evaluates the condition against live gateway telemetry without arming anything.
+              </p>
+            )}
           </div>
         </div>
         <DialogFooter>

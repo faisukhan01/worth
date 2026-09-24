@@ -1,17 +1,33 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAiops, useAlerts, usePromoteIncident, useIncidentAction } from '@/hooks/use-console-data'
 import { StatusPill, EmptyState, TONE_COLOR, SectionHeader, statusTone } from '@/components/console/primitives'
 import { AreaChart, ConfidenceBar } from '@/components/console/charts'
 import { fmtNum, timeAgo, fmtClock } from '@/lib/format'
+import { useAutoPromote } from '@/lib/auto-promote-store'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Switch } from '@/components/ui/switch'
 import { toast } from 'sonner'
 import { BrainCircuit, Check, LineChart as LineChartIcon, Stethoscope, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { OpenIncident } from '@/hooks/use-console-data'
 
 const FORECAST_COLOR = 'var(--chart-4)'
+// Auto-promotion guard rails: only CRITICAL active anomalies are promoted, at
+// most one per cooldown window, so a detection storm cannot flood the register.
+const AUTO_PROMOTE_COOLDOWN_MS = 90_000
+const AUTO_PROMOTE_POLL_MS = 30_000
+
+function AutoPromoteToggle() {
+  const [enabled, setEnabled] = useAutoPromote()
+  return (
+    <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-muted-foreground">
+      <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="Auto-promote critical anomalies" className="scale-75" />
+      auto-promote critical
+    </label>
+  )
+}
 
 export function AiopsView() {
   const { data, isLoading } = useAiops()
@@ -20,6 +36,7 @@ export function AiopsView() {
   const action = useIncidentAction()
   const [forecastIdx, setForecastIdx] = useState(0)
   const [promoted, setPromoted] = useState<Set<string>>(new Set())
+  const [autoPromote] = useAutoPromote()
 
   // Stable key per (service, metric) — survives anomaly-id rotation between polls.
   const keyOf = (service: string, metric: string) => `${service}:${metric}`
@@ -29,6 +46,53 @@ export function AiopsView() {
       openByDedupKey.set(i.dedupKey, i)
     }
   }
+
+  // Auto-promotion loop. Reads anomalies/open-incidents through refs so the
+  // interval is not re-armed on every poll; only critical + active anomalies
+  // that are not yet tracked are eligible, max one per cooldown.
+  const anomaliesRef = useRef(data?.anomalies)
+  const openRef = useRef(openByDedupKey)
+  const promotedRef = useRef(promoted)
+  const lastAutoAt = useRef(0)
+  useEffect(() => {
+    anomaliesRef.current = data?.anomalies
+    openRef.current = openByDedupKey
+    promotedRef.current = promoted
+  })
+  useEffect(() => {
+    if (!autoPromote) return
+    const tick = () => {
+      if (Date.now() - lastAutoAt.current < AUTO_PROMOTE_COOLDOWN_MS) return
+      const open = openRef.current
+      const eligible = (anomaliesRef.current ?? []).find(
+        (a) => a.severity === 'critical' && a.active !== false &&
+          !open.has(`${a.service}:${a.metric}`) && !promotedRef.current.has(`${a.service}:${a.metric}`),
+      )
+      if (!eligible) return
+      lastAutoAt.current = Date.now()
+      promote
+        .mutateAsync({
+          service: eligible.service,
+          metric: eligible.metric,
+          severity: eligible.severity,
+          message: eligible.message,
+          baseline: eligible.baseline,
+          observed: eligible.observed,
+        })
+        .then((r) => {
+          if (!r.deduplicated) {
+            toast.info('Auto-promoted critical anomaly', {
+              description: `${eligible.metric} on ${eligible.service} joined the incident register.`,
+            })
+          }
+        })
+        .catch(() => {
+          // promotion failed - next cooldown will retry
+        })
+    }
+    const t = setInterval(tick, AUTO_PROMOTE_POLL_MS)
+    return () => clearInterval(t)
+  }, [autoPromote])
 
   if (isLoading && !data) {
     return (
@@ -79,7 +143,7 @@ export function AiopsView() {
       <div className="grid gap-3 lg:grid-cols-5">
         {/* Anomalies */}
         <div className="card-surface lg:col-span-2">
-          <SectionHeader title="Anomaly feed" hint="explainable · baseline vs observed" />
+          <SectionHeader title="Anomaly feed" hint="explainable · baseline vs observed" right={<AutoPromoteToggle />} />
           <div className="scroll-thin max-h-[520px] space-y-2 overflow-y-auto px-4 pb-4">
             {anomalies.length ? (
               anomalies.map((a) => (

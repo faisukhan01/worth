@@ -1,12 +1,13 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   Activity, BrainCircuit, CreditCard, LayoutDashboard, ScrollText,
   Settings, Siren, Boxes, Search, RefreshCw, ChevronRight,
-  CircleHelp, Radar, FileBarChart,
+  CircleHelp, Radar, FileBarChart, Sun, Moon,
 } from 'lucide-react'
+import { useTheme } from 'next-themes'
 import { Command, CommandDialog, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -24,6 +25,36 @@ const VIEW_ICONS: Record<ViewKey, React.ComponentType<{ className?: string }>> =
   billing: CreditCard,
   reports: FileBarChart,
   settings: Settings,
+}
+
+/** Hydration guard without setState-in-effect (lint-clean useSyncExternalStore idiom). */
+const emptySubscribe = () => () => {}
+function useMounted(): boolean {
+  return useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false,
+  )
+}
+
+function ThemeToggle() {
+  const { resolvedTheme, setTheme } = useTheme()
+  const mounted = useMounted()
+
+  const isDark = mounted && resolvedTheme === 'dark'
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="h-8 w-8"
+      aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+      onClick={() => setTheme(isDark ? 'light' : 'dark')}
+    >
+      {isDark
+        ? <Sun className="h-4 w-4" />
+        : <Moon className={cn('h-4 w-4', !mounted && 'opacity-0')} />}
+    </Button>
+  )
 }
 
 interface HealthPayload {
@@ -151,6 +182,12 @@ export function ConsoleShell({ children }: { children: React.ReactNode }) {
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>Refresh plane status</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <ThemeToggle />
+                </TooltipTrigger>
+                <TooltipContent>Toggle light / dark theme</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
