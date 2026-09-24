@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { useAiops, usePromoteIncident } from '@/hooks/use-console-data'
+import { useAiops, useAlerts, usePromoteIncident } from '@/hooks/use-console-data'
 import { StatusPill, EmptyState, TONE_COLOR, SectionHeader, statusTone } from '@/components/console/primitives'
 import { AreaChart, ConfidenceBar } from '@/components/console/charts'
 import { fmtNum, timeAgo, fmtClock } from '@/lib/format'
@@ -14,9 +14,18 @@ const FORECAST_COLOR = 'var(--chart-4)'
 
 export function AiopsView() {
   const { data, isLoading } = useAiops()
+  const { data: alertsData } = useAlerts() // open incidents seed the promoted state
   const promote = usePromoteIncident()
   const [forecastIdx, setForecastIdx] = useState(0)
   const [promoted, setPromoted] = useState<Set<string>>(new Set())
+
+  // Stable key per (service, metric) — survives anomaly-id rotation between polls.
+  const keyOf = (service: string, metric: string) => `${service}:${metric}`
+  const openDedupKeys = new Set(
+    (alertsData?.incidents ?? [])
+      .filter((i) => i.status !== 'resolved' && i.dedupKey)
+      .map((i) => i.dedupKey as string),
+  )
 
   if (isLoading && !data) {
     return (
@@ -109,7 +118,7 @@ export function AiopsView() {
                   </div>
                   <button
                     className="mt-2 w-full rounded-md border border-dashed py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:border-ring hover:text-foreground disabled:opacity-50"
-                    disabled={promote.isPending || promoted.has(a.id)}
+                    disabled={promote.isPending || promoted.has(keyOf(a.service, a.metric)) || openDedupKeys.has(keyOf(a.service, a.metric))}
                     onClick={() => {
                       promote.mutate(
                         {
@@ -122,7 +131,7 @@ export function AiopsView() {
                         },
                         {
                           onSuccess: (r) => {
-                            setPromoted((prev) => new Set(prev).add(a.id))
+                            setPromoted((prev) => new Set(prev).add(keyOf(a.service, a.metric)))
                             toast.success(r.deduplicated ? 'Already in the register' : 'Promoted to incident', {
                               description: `${a.metric} on ${a.service} is now tracked under Alerts.`,
                             })
@@ -133,7 +142,7 @@ export function AiopsView() {
                       )
                     }}
                   >
-                    {promoted.has(a.id)
+                    {promoted.has(keyOf(a.service, a.metric)) || openDedupKeys.has(keyOf(a.service, a.metric))
                       ? 'In the register →'
                       : promote.isPending
                         ? 'Promoting…'

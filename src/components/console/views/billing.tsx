@@ -2,11 +2,17 @@
 
 import { useBilling } from '@/hooks/use-console-data'
 import { Gauge, MiniBars, ShareBar } from '@/components/console/charts'
-import { EmptyState, SectionHeader, TONE_COLOR } from '@/components/console/primitives'
+import { EmptyState, SectionHeader, TONE_COLOR, LiveDot } from '@/components/console/primitives'
 import { fmtNum, usd, fmtDay } from '@/lib/format'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { Check, CreditCard, Database, Sparkles } from 'lucide-react'
+
+const QUOTA_LABELS: Record<string, string> = {
+  'ingested.events': 'Ingested events',
+  'ingested.gb': 'Ingested volume',
+  'aiops.insights': 'AIOps insights',
+}
 
 export function BillingView() {
   const { data, isLoading } = useBilling()
@@ -22,16 +28,32 @@ export function BillingView() {
   }
   if (!data) return <EmptyState title="Usage data unavailable" />
 
-  const { plan, usage, invoice, dailyCost, services } = data
+  const { plan, usage, invoice, dailyCost, services, plane } = data
   const quotaTone = usage.quotaPct > 100 ? 'crit' : usage.quotaPct > 80 ? 'warn' : 'ok'
+  const planeLive = plane?.connected === true
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-lg font-semibold tracking-tight">Usage & metering</h1>
-        <p className="text-xs text-muted-foreground">
-          billing period {fmtDay(usage.periodStart)} – {fmtDay(usage.periodEnd)} · ledger mirrored from billing-core (Java) semantics
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-lg font-semibold tracking-tight">Usage & metering</h1>
+          <p className="text-xs text-muted-foreground">
+            billing period {fmtDay(usage.periodStart)} – {fmtDay(usage.periodEnd)} · ledger mirrored from billing-core (Java) semantics
+          </p>
+        </div>
+        <div
+          className="flex items-center gap-1.5 rounded-full border bg-card/60 px-2.5 py-1 text-[11px]"
+          style={{
+            borderColor: planeLive ? 'color-mix(in oklch, var(--ok) 35%, transparent)' : 'color-mix(in oklch, var(--warn) 35%, transparent)',
+          }}
+        >
+          <LiveDot tone={planeLive ? 'ok' : 'warn'} />
+          <span className={planeLive ? 'text-foreground/80' : 'text-muted-foreground'}>
+            {planeLive
+              ? `billing plane live · ${plane!.orgId ?? 'org'} · ${plane!.plan ?? plan.key}`
+              : 'billing plane offline · ledger mirror only'}
+          </span>
+        </div>
       </div>
 
       <div className="grid gap-3 lg:grid-cols-3">
@@ -75,6 +97,35 @@ export function BillingView() {
           <div className="mt-2 text-[10px]" style={{ color: TONE_COLOR[quotaTone] }}>
             {usage.quotaPct > 100 ? 'overage in effect' : usage.quotaPct > 80 ? 'approaching quota' : 'healthy headroom'}
           </div>
+          {planeLive && (plane?.quotas?.length ?? 0) > 0 && (
+            <div className="mt-4 w-full space-y-2 border-t pt-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Live quotas · billing-core :4100
+              </div>
+              {plane!.quotas!.slice(0, 3).map((q) => {
+                const tone = q.state === 'exceeded' ? 'crit' : q.state === 'soft breach' ? 'warn' : 'ok'
+                return (
+                  <div key={q.metricName}>
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className="text-muted-foreground">{QUOTA_LABELS[q.metricName] ?? q.metricName}</span>
+                      <span className="tabular" style={{ color: TONE_COLOR[tone] }}>
+                        {q.percentUsed.toFixed(0)}% · {q.state}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 h-1 w-full overflow-hidden rounded-full bg-muted">
+                      <div
+                        className="h-full rounded-full transition-all"
+                        style={{ width: `${Math.min(100, q.percentUsed)}%`, background: TONE_COLOR[tone] }}
+                      />
+                    </div>
+                    <div className="mt-0.5 text-right text-[9px] tabular text-muted-foreground">
+                      {fmtNum(q.consumed)} / {fmtNum(q.softLimit)} soft · {fmtNum(q.hardLimit)} hard
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
 
         {/* Projected invoice */}

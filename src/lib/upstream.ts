@@ -10,6 +10,8 @@
 
 export const GATEWAY_URL = process.env.LODESTAR_GATEWAY_URL ?? 'http://127.0.0.1:3100'
 export const AIOPS_URL = process.env.LODESTAR_AIOPS_URL ?? 'http://127.0.0.1:3200'
+export const BILLING_URL = process.env.LODESTAR_BILLING_URL ?? 'http://127.0.0.1:4100'
+export const REPORTING_URL = process.env.LODESTAR_REPORTING_URL ?? 'http://127.0.0.1:4200'
 const API_KEY = process.env.LODESTAR_API_KEY ?? 'pg_live_demo_key'
 const TIMEOUT_MS = 2500
 
@@ -102,10 +104,51 @@ export const aiops = {
   health: () => fetchJson<{ status: string }>(`${AIOPS_URL}/v1/health`, 1500),
 }
 
-export async function upstreamHealth(): Promise<{ gateway: boolean; aiops: boolean }> {
-  const [g, a] = await Promise.all([
+// Code-tier services (Java billing-core :4100, C# reporting :4200). They are
+// deployment peers rather than the live data path, so probes use a shorter
+// timeout and every consumer degrades gracefully when they are offline.
+export const billing = {
+  health: () => fetchJson<{ status: string; checks?: Record<string, boolean> }>(`${BILLING_URL}/v1/health`, 1500),
+  usage: (orgId: string) =>
+    fetchJson<BillingUsageCurrent>(`${BILLING_URL}/v1/usage/current?orgId=${encodeURIComponent(orgId)}`),
+  quotas: (orgId: string) =>
+    fetchJson<BillingQuotaRow[]>(`${BILLING_URL}/v1/quotas?orgId=${encodeURIComponent(orgId)}`),
+}
+
+export const reporting = {
+  health: () => fetchJson<{ status: string; service: string }>(`${REPORTING_URL}/v1/health`, 1500),
+}
+
+export interface BillingUsageCurrent {
+  orgId: string
+  plan: string
+  periodStart: string
+  periodEnd: string
+  totals: { metricName: string; unit: string; total: number }[]
+}
+
+export interface BillingQuotaRow {
+  orgId: string
+  metricName: string
+  softLimit: number
+  hardLimit: number
+  consumedThisPeriod: number
+  periodStart: string
+}
+
+export interface PlaneHealth {
+  gateway: boolean
+  aiops: boolean
+  billing: boolean
+  reporting: boolean
+}
+
+export async function upstreamHealth(): Promise<PlaneHealth> {
+  const [g, a, b, r] = await Promise.all([
     fetchJson<{ status: string }>(`${GATEWAY_URL}/v1/health`, 1200),
     aiops.health(),
+    billing.health(),
+    reporting.health(),
   ])
-  return { gateway: !!g, aiops: !!a }
+  return { gateway: !!g, aiops: !!a, billing: !!b, reporting: !!r }
 }

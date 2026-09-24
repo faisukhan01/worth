@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { billing } from '@/lib/upstream'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,9 +26,18 @@ const PRICING: Record<string, { perMillion: number; label: string }> = {
  * GET /api/billing
  * Metered usage for the current period, plan allowances, projected invoice
  * and per-service usage split - the web-tier view of billing-core's ledger.
+ *
+ * When the Java billing-core plane (:4100) is reachable, its live quota
+ * snapshot for the demo org is merged in under `plane` so the console can
+ * show authoritative quota state; otherwise that field is null and the view
+ * degrades to the SQLite rollup (documented degradation protocol).
  */
 export async function GET() {
-  const records = await db.usageRecord.findMany({ orderBy: { day: 'asc' } })
+  const [records, planeUsage, planeQuotas] = await Promise.all([
+    db.usageRecord.findMany({ orderBy: { day: 'asc' } }),
+    billing.usage('org_demo').catch(() => null),
+    billing.quotas('org_demo').catch(() => null),
+  ])
   if (records.length === 0) {
     return NextResponse.json({ error: 'no usage data' }, { status: 404 })
   }
@@ -64,6 +74,29 @@ export async function GET() {
 
   return NextResponse.json({
     plan: { key: plan, ...p },
+    plane: planeUsage
+      ? {
+          connected: true,
+          orgId: planeUsage.orgId,
+          plan: planeUsage.plan,
+          periodStart: planeUsage.periodStart,
+          periodEnd: planeUsage.periodEnd,
+          totals: planeUsage.totals,
+          quotas: (planeQuotas ?? []).map((q) => {
+            const pct = q.softLimit > 0 ? (q.consumedThisPeriod / q.softLimit) * 100 : 0
+            const state =
+              q.consumedThisPeriod > q.hardLimit ? 'exceeded' : q.consumedThisPeriod > q.softLimit ? 'soft breach' : 'ok'
+            return {
+              metricName: q.metricName,
+              consumed: q.consumedThisPeriod,
+              softLimit: q.softLimit,
+              hardLimit: q.hardLimit,
+              percentUsed: Math.round(pct * 10) / 10,
+              state,
+            }
+          }),
+        }
+      : { connected: false },
     usage: {
       periodStart: days[0]?.[0],
       periodEnd: days[days.length - 1]?.[0],

@@ -14,10 +14,12 @@ interface TimelineEntry {
 /**
  * POST /api/incidents
  * Promote an AIOps anomaly (or a manual observation) into the incident
- * register. Deduplicates open incidents per (serviceKey, title) so repeated
- * promotions of the same rolling anomaly do not spam the register.
+ * register. Deduplication uses the stable `dedupKey` (service + metric, so
+ * state survives anomaly-id rotation between polls) and falls back to the
+ * (serviceKey, title) pair, so repeated promotions of the same rolling
+ * anomaly never spam the register.
  *
- * Body: { serviceKey, title, severity, detail?, source? }
+ * Body: { serviceKey, title, severity, detail?, source?, dedupKey? }
  */
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
@@ -32,6 +34,8 @@ export async function POST(req: NextRequest) {
   const severity = String(body.severity ?? 'warning')
   const detail = String(body.detail ?? '').slice(0, 300)
   const source = String(body.source ?? 'aiops') === 'manual' ? 'manual' : 'aiops'
+  const rawDedup = String(body.dedupKey ?? '').trim().slice(0, 120)
+  const dedupKey = /^[a-z0-9:_ .-]+$/i.test(rawDedup) ? rawDedup : null
 
   if (!serviceKey || title.length < 4 || !SEVERITIES.has(severity)) {
     return NextResponse.json(
@@ -44,7 +48,12 @@ export async function POST(req: NextRequest) {
   if (!svc) return NextResponse.json({ error: 'unknown service' }, { status: 404 })
 
   const duplicate = await db.incident.findFirst({
-    where: { serviceKey, title, status: { in: ['triggered', 'acknowledged', 'mitigated'] } },
+    where: {
+      status: { in: ['triggered', 'acknowledged', 'mitigated'] },
+      ...(dedupKey
+        ? { OR: [{ dedupKey }, { serviceKey, title }] }
+        : { serviceKey, title }),
+    },
   })
   if (duplicate) {
     return NextResponse.json({ incident: duplicate, deduplicated: true }, { status: 200 })
@@ -65,6 +74,7 @@ export async function POST(req: NextRequest) {
       severity,
       status: 'triggered',
       source,
+      dedupKey,
       timeline: JSON.stringify(timeline),
     },
   })

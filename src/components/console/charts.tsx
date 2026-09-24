@@ -8,6 +8,7 @@
 
 import { useMemo, useState, useId } from 'react'
 import { fmtClock, fmtNum } from '@/lib/format'
+import { cn } from '@/lib/utils'
 
 const OK = 'var(--ok)'
 const WARN = 'var(--warn)'
@@ -170,6 +171,243 @@ export function AreaChart({
           {fmtClock(hoverPt.ts)} · {fmtNum(hoverPt.value)}{unit}
         </div>
       )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Multi-series area chart (metrics explorer overlay)
+// Up to four metrics share one plot: crosshair + tooltip read every series,
+// and the legend toggles visibility without dropping them from the query.
+
+export interface MultiSeries {
+  name: string
+  label: string
+  color: string
+  data: Pt[]
+  unit?: string
+  fmt?: (n: number) => string
+}
+
+export function MultiAreaChart({
+  series,
+  height = 240,
+  scaled = true,
+}: {
+  series: MultiSeries[]
+  height?: number
+  scaled?: boolean // true: each series normalised to its own range (mixed units)
+}) {
+  const W = 600
+  const H = height
+  const PAD_L = 44
+  const PAD_B = 20
+  const [hoverTs, setHoverTs] = useState<number | null>(null)
+  const [hidden, setHidden] = useState<Set<string>>(new Set())
+
+  const visible = series.filter((s) => !hidden.has(s.name) && s.data.length >= 2)
+
+  const geom = useMemo(() => {
+    if (!visible.length) return null
+    let tMin = Infinity
+    let tMax = -Infinity
+    for (const s of visible) {
+      tMin = Math.min(tMin, s.data[0].ts, s.data[s.data.length - 1].ts)
+      tMax = Math.max(tMax, s.data[0].ts, s.data[s.data.length - 1].ts)
+    }
+    if (!Number.isFinite(tMin) || tMax <= tMin) return null
+    const gMin = Math.min(...visible.flatMap((s) => s.data.map((d) => d.value)))
+    const gMax = Math.max(...visible.flatMap((s) => s.data.map((d) => d.value)))
+    const gSpan = gMax - gMin || 1
+    const x = (ts: number) => PAD_L + ((ts - tMin) / (tMax - tMin)) * (W - PAD_L - 8)
+    // per-series y in scaled mode, shared y otherwise
+    const yFor = (s: MultiSeries) => {
+      if (!scaled) {
+        return (v: number) => H - PAD_B - ((v - gMin) / gSpan) * (H - PAD_B - 10)
+      }
+      let sMin = Infinity
+      let sMax = -Infinity
+      for (const d of s.data) {
+        sMin = Math.min(sMin, d.value)
+        sMax = Math.max(sMax, d.value)
+      }
+      const span = sMax - sMin || 1
+      return (v: number) => H - PAD_B - ((v - sMin) / span) * (H - PAD_B - 10)
+    }
+    return { tMin, tMax, x, yFor, gMin, gMax }
+  }, [visible, scaled, H])
+
+  const nearest = (data: Pt[], ts: number): Pt | null => {
+    if (!data.length) return null
+    let best = data[0]
+    let bd = Math.abs(data[0].ts - ts)
+    for (const p of data) {
+      const d = Math.abs(p.ts - ts)
+      if (d < bd) {
+        bd = d
+        best = p
+      }
+    }
+    return best
+  }
+
+  const toggleSeries = (name: string) =>
+    setHidden((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else if (visible.length > 1) next.add(name) // keep at least one visible
+      return next
+    })
+
+  const hoverRows =
+    hoverTs !== null && geom
+      ? visible
+          .map((s) => ({ s, pt: nearest(s.data, hoverTs) }))
+          .filter((r): r is { s: MultiSeries; pt: Pt } => !!r.pt)
+          .sort((a, b) => b.pt.value - a.pt.value)
+      : []
+
+  const tickVals = geom
+    ? scaled
+      ? [1, 0.5, 0]
+      : [geom.gMax, geom.gMin + (geom.gMax - geom.gMin) / 2, geom.gMin]
+    : []
+
+  return (
+    <div>
+      <div className="relative">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          className="w-full select-none"
+          style={{ height }}
+          role="img"
+          aria-label="multi-series chart"
+          onMouseLeave={() => setHoverTs(null)}
+          onMouseMove={(e) => {
+            if (!geom) return
+            const rect = e.currentTarget.getBoundingClientRect()
+            const px = ((e.clientX - rect.left) / rect.width) * W
+            const ratio = Math.max(0, Math.min(1, (px - PAD_L) / (W - PAD_L - 8)))
+            setHoverTs(geom.tMin + ratio * (geom.tMax - geom.tMin))
+          }}
+        >
+          <defs>
+            {series.map((s) => (
+              <linearGradient key={s.name} id={`multi-fill-${s.name.replace(/[^a-z0-9]/gi, '')}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" style={{ stopColor: s.color, stopOpacity: 0.16 }} />
+                <stop offset="100%" style={{ stopColor: s.color, stopOpacity: 0 }} />
+              </linearGradient>
+            ))}
+          </defs>
+          {tickVals.map((t, i) => {
+            const ty = scaled ? H - PAD_B - t * (H - PAD_B - 10) : geom!.yFor(visible[0])(t)
+            return (
+              <g key={i}>
+                <line x1={PAD_L} x2={W - 8} y1={ty} y2={ty} style={{ stroke: FG, strokeOpacity: 0.14 }} strokeDasharray="3 4" />
+                <text x={PAD_L - 6} y={ty + 3} textAnchor="end" fontSize="9" style={{ fill: FG }} className="tabular">
+                  {scaled ? (i === 2 ? 'base' : i === 1 ? 'mid' : 'peak') : fmtNum(t)}
+                </text>
+              </g>
+            )
+          })}
+          {geom &&
+            visible.map((s) => {
+              const y = geom.yFor(s)
+              const line = s.data
+                .map((d, i) => `${i === 0 ? 'M' : 'L'}${geom.x(d.ts).toFixed(1)},${y(d.value).toFixed(1)}`)
+                .join('')
+              const area = `${line}L${geom.x(s.data[s.data.length - 1].ts).toFixed(1)},${H - PAD_B}L${geom.x(s.data[0].ts).toFixed(1)},${H - PAD_B}Z`
+              return (
+                <g key={s.name}>
+                  <path d={area} fill={`url(#multi-fill-${s.name.replace(/[^a-z0-9]/gi, '')})`} />
+                  <path d={line} fill="none" style={{ stroke: s.color }} strokeWidth="1.7" strokeLinejoin="round" strokeLinecap="round" />
+                </g>
+              )
+            })}
+          {geom &&
+            visible[0] &&
+            (() => {
+              const x0 = geom.x(visible[0].data[0].ts)
+              const x1 = geom.x(visible[0].data[visible[0].data.length - 1].ts)
+              const t0 = visible[0].data[0].ts
+              const t1 = visible[0].data[visible[0].data.length - 1].ts
+              return [t0, t0 + (t1 - t0) / 2, t1].map((t, i) => (
+                <text
+                  key={i}
+                  x={i === 0 ? x0 : i === 1 ? (x0 + x1) / 2 : x1}
+                  y={H - 6}
+                  textAnchor={i === 0 ? 'start' : i === 1 ? 'middle' : 'end'}
+                  fontSize="9"
+                  style={{ fill: FG }}
+                >
+                  {fmtClock(t).slice(0, 5)}
+                </text>
+              ))
+            })()}
+          {hoverTs !== null && geom && (
+            <g>
+              <line x1={geom.x(hoverTs)} x2={geom.x(hoverTs)} y1={8} y2={H - PAD_B} style={{ stroke: FG }} strokeOpacity="0.35" />
+              {hoverRows.map((r) => (
+                <circle
+                  key={r.s.name}
+                  cx={geom.x(r.pt.ts)}
+                  cy={geom.yFor(r.s)(r.pt.value)}
+                  r="3"
+                  style={{ fill: r.s.color, stroke: 'var(--card)' }}
+                  strokeWidth="1.5"
+                />
+              ))}
+            </g>
+          )}
+        </svg>
+        {hoverRows.length > 0 && (
+          <div className="pointer-events-none absolute right-2 top-1 rounded-md border bg-popover/90 px-2 py-1.5 text-[10px] tabular shadow-sm">
+            <div className="mb-1 text-muted-foreground">{fmtClock(hoverRows[0].pt.ts)}</div>
+            {hoverRows.map((r) => (
+              <div key={r.s.name} className="flex items-center gap-1.5 leading-tight">
+                <span className="h-1.5 w-1.5 rounded-full" style={{ background: r.s.color }} />
+                <span className="text-muted-foreground">{r.s.label}</span>
+                <span className="ml-auto font-medium">
+                  {r.s.fmt ? r.s.fmt(r.pt.value) : fmtNum(r.pt.value)}
+                  {r.s.unit ?? ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        {!geom && (
+          <div className="flex items-center justify-center text-xs text-muted-foreground" style={{ height }}>
+            waiting for telemetry…
+          </div>
+        )}
+      </div>
+      {/* legend / visibility toggles */}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 px-3 pb-2 pt-1">
+        {series.map((s) => {
+          const off = hidden.has(s.name)
+          const latest = s.data.length ? s.data[s.data.length - 1].value : null
+          return (
+            <button
+              key={s.name}
+              onClick={() => toggleSeries(s.name)}
+              aria-pressed={!off}
+              className={cn(
+                'flex items-center gap-1.5 rounded px-1 py-0.5 text-[10px] transition-opacity hover:bg-muted/40',
+                off && 'opacity-40',
+              )}
+            >
+              <span className="h-2 w-2 rounded-full" style={{ background: s.color, opacity: off ? 0.4 : 1 }} />
+              <span className={cn('text-muted-foreground', off && 'line-through')}>{s.label}</span>
+              {latest !== null && !off && (
+                <span className="font-medium tabular">
+                  {s.fmt ? s.fmt(latest) : fmtNum(latest)}
+                  {s.unit ?? ''}
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </div>
     </div>
   )
 }

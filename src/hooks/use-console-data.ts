@@ -38,8 +38,10 @@ export interface OpenIncident {
   title: string
   severity: string
   status: string
+  source?: string
   startedAt: string
   assignee: string | null
+  dedupKey?: string | null
 }
 
 export interface AiopsAnomaly {
@@ -53,6 +55,7 @@ export interface AiopsAnomaly {
   observed: number
   message: string
   startedAt: string
+  detectedAt?: string
   active?: boolean
 }
 
@@ -109,6 +112,15 @@ export interface AlertsPayload {
 
 export interface BillingPayload {
   plan: { key: string; monthlyBase: number; includedEvents: number; includedHosts: number; perMillionOverage: number; retentionDays: number }
+  plane?: {
+    connected: boolean
+    orgId?: string
+    plan?: string
+    periodStart?: string
+    periodEnd?: string
+    totals?: { metricName: string; unit: string; total: number }[]
+    quotas?: { metricName: string; consumed: number; softLimit: number; hardLimit: number; percentUsed: number; state: string }[]
+  }
   usage: { periodStart: string; periodEnd: string; events: number; gb: number; insights: number; quotaPct: number }
   invoice: { base: number; metered: number; overage: number; projected: number; currency: string }
   dailyCost: { day: string; cost: number }[]
@@ -254,6 +266,8 @@ export function usePromoteIncident() {
           severity: anomaly.severity,
           detail: anomaly.message,
           source: 'aiops',
+          // stable across anomaly-id rotations: one open incident per service+metric
+          dedupKey: `${anomaly.service}:${anomaly.metric}`,
         }),
       })
       if (!res.ok) {

@@ -48,6 +48,7 @@ model Incident {
   severity       String // critical | warning | info
   status         String    @default("triggered") // triggered | acknowledged | mitigated | resolved
   source         String    @default("aiops") // aiops | manual
+  dedupKey       String? // stable promotion key, e.g. "checkout-service:latency.p99"
   startedAt      DateTime  @default(now())
   acknowledgedAt DateTime?
   resolvedAt     DateTime?
@@ -55,6 +56,7 @@ model Incident {
   timeline       String    @default("[]") // JSON: [{ts, event, detail}]
 
   @@index([status, startedAt])
+  @@index([dedupKey])
 }
 
 model TeamMember {

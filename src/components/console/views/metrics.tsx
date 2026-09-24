@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useMetrics } from '@/hooks/use-console-data'
-import { AreaChart } from '@/components/console/charts'
+import { MultiAreaChart, type MultiSeries } from '@/components/console/charts'
 import { SectionHeader, EmptyState } from '@/components/console/primitives'
 import { fmtNum, fmtMs, fmtPct } from '@/lib/format'
 import { useConsole, RANGES } from '@/store/console-store'
@@ -29,6 +29,7 @@ export function MetricsView() {
   const [selected, setSelected] = useState<string[]>(['latency.p99', 'error.rate'])
   const [service, setService] = useState('all')
   const [agentOnly, setAgentOnly] = useState(false)
+  const [scaled, setScaled] = useState(true)
   const { range, setRange } = useConsole()
 
   const names = selected.join(',')
@@ -134,15 +135,53 @@ export function MetricsView() {
         <SectionHeader
           title={selected.map((s) => opt(s)?.label ?? s).join(' · ') || 'no metric selected'}
           hint={service === 'all' ? 'all services' : service}
-          right={<span className="text-[10px] text-muted-foreground">{data?.series?.length ?? 0} raw series aggregated</span>}
+          right={
+            <div className="flex items-center gap-3">
+              {selected.length > 1 && (
+                <div className="flex items-center gap-1 rounded-md border bg-card/60 p-0.5" role="group" aria-label="scale mode">
+                  {([
+                    ['scaled', true],
+                    ['absolute', false],
+                  ] as const).map(([label, val]) => (
+                    <button
+                      key={label}
+                      onClick={() => setScaled(val)}
+                      aria-pressed={scaled === val}
+                      className={cn(
+                        'rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors',
+                        scaled === val ? 'bg-primary/15 text-primary' : 'text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <span className="text-[10px] text-muted-foreground">{data?.series?.length ?? 0} raw series aggregated</span>
+            </div>
+          }
         />
-        <div className="px-2 pb-3">
+        <div className="px-2 pb-1 pt-1">
           {isLoading && !data ? (
-            <Skeleton className="mx-2 h-[220px]" />
+            <Skeleton className="mx-2 h-[230px]" />
           ) : selected.length === 0 ? (
-            <EmptyState title="Select up to four metrics" hint="chips above build the query" />
+            <EmptyState title="Select up to four metrics" hint="chips above build the query · legend items toggle series" />
           ) : (
-            <AreaChart data={chartData.get(selected[0]) ?? []} height={230} color={SERIES_COLORS[0]} unit={opt(selected[0])?.unit ?? ''} />
+            <MultiAreaChart
+              series={selected.map((id, idx): MultiSeries => {
+                const o = opt(id)
+                return {
+                  name: id,
+                  label: o?.label ?? id,
+                  color: SERIES_COLORS[idx % 4],
+                  data: chartData.get(id) ?? [],
+                  unit: o?.unit ?? '',
+                  fmt: o?.fmt,
+                }
+              })}
+              scaled={scaled}
+              height={240}
+            />
           )}
         </div>
       </div>

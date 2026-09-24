@@ -62,6 +62,18 @@ make dev-reporting
 
 Authentication for ingest endpoints: `x-api-key: pg_live_demo_key`.
 
+### One-shot bring-up (sandbox / CI smoke)
+
+`scripts/up-platform.sh` is an idempotent starter: it probes each plane's
+health endpoint first and only launches what is missing, so it is safe to
+re-run from cron sessions or after a restart.
+
+```sh
+bash scripts/up-platform.sh              # all planes: gateway agent aiops billing reporting
+bash scripts/up-platform.sh billing      # just one plane
+tail -f logs/<plane>.log                 # per-plane logs land in <repo>/logs/
+```
+
 ## Docker Compose
 
 ```sh

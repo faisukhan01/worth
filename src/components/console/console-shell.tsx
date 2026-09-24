@@ -27,7 +27,8 @@ const VIEW_ICONS: Record<ViewKey, React.ComponentType<{ className?: string }>> =
 
 interface HealthPayload {
   status: string
-  planes: { gateway: boolean; aiops: boolean; database: boolean }
+  planes: { gateway: boolean; aiops: boolean; database: boolean; billing: boolean; reporting: boolean }
+  codeTier: boolean
   latencyMs: number
   version: string
 }
@@ -61,7 +62,11 @@ export function ConsoleShell({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  const tone = health ? (health.status === 'ok' ? 'ok' : health.planes.gateway || health.planes.aiops ? 'warn' : 'crit') : 'neutral'
+  const tone = !health
+    ? 'neutral'
+    : health.status === 'ok'
+      ? health.codeTier ? 'ok' : 'warn' // core green, code tier down
+      : 'crit'
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -110,6 +115,8 @@ export function ConsoleShell({ children }: { children: React.ReactNode }) {
             </div>
             <PlaneRow name="Ingest gateway" tech="Go" up={health?.planes.gateway} />
             <PlaneRow name="AIOps engine" tech="Python" up={health?.planes.aiops} />
+            <PlaneRow name="Billing core" tech="Java" up={health?.planes.billing} />
+            <PlaneRow name="Reporting" tech="C#" up={health?.planes.reporting} />
             <PlaneRow name="Control store" tech="SQLite" up={health?.planes.database} />
           </div>
         </aside>
@@ -151,7 +158,11 @@ export function ConsoleShell({ children }: { children: React.ReactNode }) {
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <div className="text-xs">Gateway: <code className="font-mono">:3100</code> · AIOps: <code className="font-mono">:3200</code></div>
+                  <div className="text-xs leading-relaxed">
+                    Gateway <code className="font-mono">:3100</code> · AIOps <code className="font-mono">:3200</code>
+                    <br />
+                    Billing <code className="font-mono">:4100</code> · Reporting <code className="font-mono">:4200</code>
+                  </div>
                 </TooltipContent>
               </Tooltip>
 
@@ -182,13 +193,21 @@ export function ConsoleShell({ children }: { children: React.ReactNode }) {
           <footer className="mt-auto border-t bg-card/40">
             <div className="flex flex-wrap items-center gap-x-5 gap-y-1 px-4 py-2.5 text-[11px] text-muted-foreground md:px-6">
               <span className="flex items-center gap-1.5">
-                <LiveDot tone={tone} />
+                <LiveDot tone={tone as 'ok' | 'warn' | 'crit' | 'neutral'} />
                 <span className="font-medium text-foreground/80">
-                  {health ? (health.status === 'ok' ? 'All systems operational' : 'Partial degradation') : 'checking…'}
+                  {health
+                    ? health.status === 'ok'
+                      ? health.codeTier
+                        ? 'All systems operational'
+                        : 'Core operational · code tier offline'
+                      : 'Partial degradation'
+                    : 'checking…'}
                 </span>
               </span>
               <span>gateway {health?.planes.gateway ? '✓' : '×'} :3100</span>
               <span>aiops {health?.planes.aiops ? '✓' : '×'} :3200</span>
+              <span className="hidden md:inline">billing {health?.planes.billing ? '✓' : '×'} :4100</span>
+              <span className="hidden md:inline">reporting {health?.planes.reporting ? '✓' : '×'} :4200</span>
               <span className="ml-auto hidden sm:inline">Lodestar v{health?.version ?? '0.1.0'} · us-east-1 · probe {health?.latencyMs ?? '—'}ms</span>
             </div>
           </footer>
