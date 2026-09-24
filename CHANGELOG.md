@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - console iteration 7+8
+- **SLO burn-rate alert rules (Alerts)** - the rule evaluator accepts
+  report-backed metrics `slo.burn_rate` / `slo.availability`: instead of
+  gateway series it reads the newest SLA report for the service from the C#
+  reporting plane (no window applies; the report carries its own) and returns
+  `reportId`/`reportFrom`/`reportTo`/`sloTarget` alongside the verdict. The
+  new-rule dialog groups the SLO metrics under a "reporting plane" label,
+  swaps in sensible thresholds (burn 2 / availability 99.9), disables the
+  window input and explains the evaluation source; armed SLO rules carry a
+  violet SLO badge in the rules table. Services without a stored report
+  evaluate to `evaluable: false` with a pointed reason.
+- **Live log tail (Logs)** - new `GET /api/logs/stream` server-side proxy for
+  the gateway SSE fan-out (attaches `x-api-key` EventSource cannot send,
+  pipes bytes unchanged, aborts upstream on client disconnect). The Logs view
+  gains a Live tail toggle: fresh rows stream in above the ring buffer with a
+  `live` badge and rise-in accent, dedupe against the 5s poller, respect the
+  active level/service/grep filters (re-checked at render time so rows that
+  arrived under an earlier filter cannot linger), and the footer shows live
+  gateway stats (agents / rps / series) from SSE heartbeats.
+- **Activity deep-links (Alerts)** - every audit-trail row is now a button:
+  clicking it switches to the Incidents tab, resets filters, expands the
+  incident, smooth-scrolls it into view and flashes a ring for 2.6s.
+  Deep-linked resolved incidents beyond the usual 6-row tail are revealed.
+- **Smoke probe: SSE** - `scripts/smoke.sh` gained a live-stream section
+  probing gateway `/v1/stream` and the console proxy (17 checks total);
+  docs/operations.md and docs/api-contracts.md updated accordingly.
+
+### Fixed - iteration 7+8
+- **Gateway SSE 500 "streaming unsupported"** - the log middleware's
+  `statusRecorder` wrapper did not implement `http.Flusher`, so every
+  `/v1/stream` request failed the flusher assertion and 500'd. The recorder
+  now forwards Flush; gateway rebuilt and verified streaming through both the
+  direct endpoint and the console proxy.
+
 ### Added - console iteration 6
 - **Theme switching** - next-themes wired into the console (class strategy,
   dark default, OS preference honoured); topbar sun/moon toggle with a

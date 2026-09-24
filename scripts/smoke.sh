@@ -55,6 +55,22 @@ warn_probe() {
   warn=$((warn+1)); return 0
 }
 
+sse_probe() {
+  # sse_probe <label> <expect-substring> <url> [curl-args...]
+  # A stream never ends, so curl hitting the 3s cap (exit 28) is expected:
+  # the probe passes as long as the expected frame showed up in the window.
+  local label="$1" expect="$2" url="$3"; shift 3
+  local body status
+  body=$(curl -sN --max-time 3 "$@" "$url" 2>/dev/null)
+  status=$?
+  if { [ $status -eq 0 ] || [ $status -eq 28 ]; } && [[ "$body" == *"$expect"* ]]; then
+    printf "  ${GREEN}PASS${RESET}  %-34s stream alive (%s bytes in 3s)\n" "$label" "$(printf '%s' "$body" | wc -c)"
+    pass=$((pass+1)); return 0
+  fi
+  printf "  ${RED}FAIL${RESET}  %-34s no '%s' within 3s of stream\n" "$label" "$expect"
+  fail=$((fail+1)); return 1
+}
+
 echo "Lodestar smoke probe $(date -u '+%Y-%m-%dT%H:%M:%SZ') (deep=$DEEP)"
 echo "-----------------------------------------------------------------------"
 
@@ -82,6 +98,10 @@ probe "POST /v1/ingest/metrics"  '"accepted":1'      POST "$GATEWAY/v1/ingest/me
   -d "{\"metrics\":[{\"name\":\"smoke.probe\",\"value\":1,\"tags\":{\"source\":\"smoke\"},\"ts\":$ts}]}"
 probe "GET query returns probe"  'smoke.probe'       GET "$GATEWAY/v1/query/metrics?names=smoke.probe&range=5m&points=5" \
   -H "x-api-key: $API_KEY"
+
+echo "live streams (sse):"
+sse_probe "gateway /v1/stream"   'event: heartbeat'  "$GATEWAY/v1/stream" -H "x-api-key: $API_KEY"
+sse_probe "console /api/logs/stream" 'event:'        "$WEB/api/logs/stream"
 
 if [ "$DEEP" -eq 1 ]; then
   echo "deep probes:"

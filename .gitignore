@@ -153,3 +153,8 @@ tests/
 download/
 *.tgz
 mini-services/
+
+# Negations: app code must never be swallowed by the generic patterns above
+!src/app/api/alerts/rules/
+!src/app/api/alerts/rules/test/
+!src/app/api/logs/

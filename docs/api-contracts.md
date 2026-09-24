@@ -184,6 +184,31 @@ curl -sS http://localhost:3000/api/health
 curl -sS http://localhost:3000/api/insights
 ```
 
+### GET /api/logs/stream (SSE proxy)
+
+Server-side proxy for the gateway's `/v1/stream`: attaches `x-api-key`
+EventSource cannot send, then pipes the event bytes unchanged
+(`event: log` / `event: heartbeat`). The Logs view "Live tail" toggle
+consumes it; disconnecting the client aborts the upstream fetch.
+
+```sh
+curl -sS -N --max-time 3 http://localhost:3000/api/logs/stream
+```
+
+### POST /api/alerts/rules/test (rule metrics)
+
+Besides gateway metrics (`error.rate`, `latency.p99`, ...) the test-fire /
+dry-run evaluator accepts **report-backed SLO metrics**:
+
+| metric              | value evaluated                             |
+| ------------------- | ------------------------------------------- |
+| `slo.burn_rate`     | `summary.burnRate` of the newest SLA report |
+| `slo.availability`  | `summary.availabilityPct` of the newest SLA report |
+
+No gateway window applies - the report carries its own; the response adds
+`reportId` / `reportFrom` / `reportTo` / `sloTarget` to the evaluation.
+Services without a stored report evaluate to `evaluable: false`.
+
 ---
 
 ## Billing core (Java 17 / Spring Boot 3, port 4100) and Reporting (C# / .NET 8, port 4200)

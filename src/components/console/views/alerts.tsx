@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAlerts, useIncidentAction, useCreateRule, useTestRule, useBulkIncidentAction, useAssignIncident, useSettings, useActivity, type OpenIncident } from '@/hooks/use-console-data'
 import { StatusPill, EmptyState, TONE_COLOR, statusTone, SectionHeader } from '@/components/console/primitives'
 import { timeAgo } from '@/lib/format'
@@ -10,11 +10,11 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Input } from '@/components/ui/input'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from 'sonner'
-import { BellRing, FlaskConical, Plus, ShieldCheck, Siren, Timer, UserPlus, Filter, Pin, PinOff, History } from 'lucide-react'
+import { BellRing, Crosshair, FlaskConical, Gauge, Plus, ShieldCheck, Siren, Timer, UserPlus, Filter, Pin, PinOff, History } from 'lucide-react'
 
 interface TimelineEntry {
   ts: string
@@ -67,6 +67,38 @@ export function AlertsView() {
   const [presets, savePreset, removePreset] = useIncidentFilterPresets()
   const [activityEvent, setActivityEvent] = useState('')
   const activity = useActivity('', activityEvent)
+  const [tab, setTab] = useState('incidents')
+  const [focusId, setFocusId] = useState<string | null>(null)
+  const [flashId, setFlashId] = useState<string | null>(null)
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Deep-link: once the register has rendered the focused incident, scroll it
+  // into view and flash it so the eye can find the row instantly.
+  useEffect(() => {
+    if (!focusId) return
+    const t = setTimeout(() => {
+      const el = document.querySelector(`[data-incident-id="${focusId}"]`)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        setFlashId(focusId)
+        flashTimer.current = setTimeout(() => setFlashId(null), 2600)
+      }
+    }, 80)
+    return () => {
+      clearTimeout(t)
+      if (flashTimer.current) clearTimeout(flashTimer.current)
+    }
+  }, [focusId])
+
+  /** Jump from an Activity row to the incident: incidents tab, filters reset,
+   *  card expanded and flashed. */
+  const jumpToIncident = (incidentId: string) => {
+    const inc = data?.incidents.find((i) => i.id === incidentId)
+    setFilters(NO_FILTERS)
+    setTab('incidents')
+    setFocusId(incidentId)
+    if (inc) setSelected(inc as OpenIncident)
+  }
 
   if (isLoading && !data) {
     return (
@@ -87,6 +119,8 @@ export function AlertsView() {
 
   const open = data.incidents.filter((i) => i.status !== 'resolved' && matches(i))
   const resolved = data.incidents.filter((i) => i.status === 'resolved' && matches(i))
+  // Deep-linked resolved incidents must be visible even beyond the usual 6-row tail.
+  const resolvedShown = focusId && resolved.some((r) => r.id === focusId) ? resolved : resolved.slice(0, 6)
 
   const act = (id: string, action: 'acknowledge' | 'mitigate' | 'resolve') => {
     incidentAction.mutate(
@@ -236,7 +270,7 @@ export function AlertsView() {
         <StatCard icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Resolved (register)" value={data.counts.resolved} filteredValue={filtersActive(filters) ? data.incidents.filter((i) => i.status === 'resolved' && matches(i)).length : undefined} tone="ok" />
       </div>
 
-      <Tabs defaultValue="incidents">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="h-8">
           <TabsTrigger value="incidents" className="text-xs">Incidents</TabsTrigger>
           <TabsTrigger value="rules" className="text-xs">Rules</TabsTrigger>
@@ -398,7 +432,7 @@ export function AlertsView() {
               </div>
             )}
           </div>
-          {[...open, ...resolved.slice(0, 6)].map((i) => {
+          {[...open, ...resolvedShown].map((i) => {
             const tone = statusTone(i.status === 'resolved' ? i.status : i.severity)
             let timeline: TimelineEntry[] = []
             try {
@@ -407,7 +441,15 @@ export function AlertsView() {
               timeline = []
             }
             return (
-              <div key={i.id} className={cn('card-surface overflow-hidden', checked.has(i.id) && 'ring-1 ring-primary/40')}>
+              <div
+                key={i.id}
+                data-incident-id={i.id}
+                className={cn(
+                  'card-surface overflow-hidden',
+                  checked.has(i.id) && 'ring-1 ring-primary/40',
+                  flashId === i.id && 'ring-2 ring-primary/60',
+                )}
+              >
                 <div
                   role="button"
                   tabIndex={0}
@@ -536,6 +578,14 @@ export function AlertsView() {
                     <td className="px-4 py-2.5 font-mono text-[11px]">{r.serviceKey}</td>
                     <td className="px-3 py-2.5">
                       <span className="font-mono text-[11px] text-primary">{r.metric}</span>
+                      {r.metric.startsWith('slo.') && (
+                        <span
+                          className="ml-1.5 inline-flex items-center gap-0.5 rounded border border-violet-500/30 bg-violet-500/10 px-1 py-px align-middle text-[8px] font-semibold uppercase tracking-wider text-violet-500"
+                          title="Report-backed: evaluated against the newest SLA report"
+                        >
+                          <Gauge className="h-2.5 w-2.5" /> SLO
+                        </span>
+                      )}
                       <span className="mx-1 text-muted-foreground">{r.comparator === 'above' ? '>' : '<'}</span>
                       <span className="tabular font-medium">{r.threshold}</span>
                     </td>
@@ -566,7 +616,7 @@ export function AlertsView() {
               </tbody>
             </table>
             <div className="border-t bg-muted/20 px-4 py-2 text-[10px] text-muted-foreground">
-              Test evaluates the rule against live gateway telemetry (read-only). If it would fire, you can register a DRILL incident from the toast to rehearse ack/mitigate/resolve.
+              Test evaluates the rule read-only - gateway metrics against live telemetry, <span className="font-medium text-foreground/70">slo.*</span> rules against the newest SLA report. If it would fire, you can register a DRILL incident from the toast to rehearse ack/mitigate/resolve.
             </div>
           </div>
         </TabsContent>
@@ -611,19 +661,27 @@ export function AlertsView() {
                           style={{ background: TONE_COLOR[tone] }}
                           aria-hidden
                         />
-                        <div className="min-w-0 flex-1 rounded-lg border bg-card/40 px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => jumpToIncident(e.incidentId)}
+                          title="Open this incident in the register"
+                          className="group min-w-0 flex-1 cursor-pointer rounded-lg border bg-card/40 px-3 py-2 text-left transition-colors hover:border-ring/50 hover:bg-accent/20"
+                        >
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                             <span className="text-[11px] font-semibold capitalize" style={{ color: TONE_COLOR[tone] }}>
                               {e.event}
                             </span>
                             <span className="font-mono text-[10px] text-muted-foreground">{e.serviceKey}</span>
                             <span className="text-[10px] text-muted-foreground">{e.incidentTitle}</span>
-                            <span className="ml-auto shrink-0 text-[10px] tabular text-muted-foreground">
-                              {timeAgo(e.ts)}
+                            <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                              <span className="flex items-center gap-0.5 text-[10px] text-primary opacity-0 transition-opacity group-hover:opacity-100">
+                                <Crosshair className="h-2.5 w-2.5" /> open
+                              </span>
+                              <span className="text-[10px] tabular text-muted-foreground">{timeAgo(e.ts)}</span>
                             </span>
                           </div>
                           <div className="mt-0.5 text-[11px] text-muted-foreground">{e.detail}</div>
-                        </div>
+                        </button>
                       </li>
                     )
                   })}
@@ -684,6 +742,19 @@ function NewRuleDialog() {
   })
 
   const clearPreview = () => setPreview(null)
+
+  const isSlo = form.metric.startsWith('slo.')
+
+  /** Sensible defaults when switching between gateway and SLO metrics. */
+  const setMetric = (metric: string) => {
+    setForm((f) => ({
+      ...f,
+      metric,
+      comparator: metric === 'slo.availability' ? 'below' : metric === 'slo.burn_rate' ? 'above' : f.comparator,
+      threshold: metric === 'slo.burn_rate' ? '2' : metric === 'slo.availability' ? '99.9' : f.threshold,
+    }))
+    clearPreview()
+  }
 
   const runPreview = () => {
     testRule.mutate(
@@ -747,12 +818,20 @@ function NewRuleDialog() {
           </Labeled>
           <div className="grid grid-cols-3 gap-2">
             <Labeled label="Metric">
-              <Select value={form.metric} onValueChange={(v) => { clearPreview(); setForm({ ...form, metric: v }) }}>
+              <Select value={form.metric} onValueChange={setMetric}>
                 <SelectTrigger className="h-8 font-mono text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {['error.rate', 'latency.p99', 'latency.p95', 'request.rate', 'cpu.usage'].map((m) => (
-                    <SelectItem key={m} value={m} className="font-mono text-xs">{m}</SelectItem>
-                  ))}
+                  <SelectGroup>
+                    <SelectLabel className="text-[9px] uppercase tracking-wider text-muted-foreground">Gateway telemetry</SelectLabel>
+                    {['error.rate', 'latency.p99', 'latency.p95', 'request.rate', 'cpu.usage'].map((m) => (
+                      <SelectItem key={m} value={m} className="font-mono text-xs">{m}</SelectItem>
+                    ))}
+                  </SelectGroup>
+                  <SelectGroup>
+                    <SelectLabel className="text-[9px] uppercase tracking-wider text-muted-foreground">SLO · reporting plane</SelectLabel>
+                    <SelectItem value="slo.burn_rate" className="font-mono text-xs">slo.burn_rate</SelectItem>
+                    <SelectItem value="slo.availability" className="font-mono text-xs">slo.availability</SelectItem>
+                  </SelectGroup>
                 </SelectContent>
               </Select>
             </Labeled>
@@ -770,8 +849,15 @@ function NewRuleDialog() {
             </Labeled>
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <Labeled label="Window (minutes)">
-              <Input className="h-8 text-xs tabular" value={form.windowMinutes} onChange={(e) => { clearPreview(); setForm({ ...form, windowMinutes: e.target.value }) }} inputMode="numeric" />
+            <Labeled label={isSlo ? 'Window (report-defined)' : 'Window (minutes)'}>
+              <Input
+                className="h-8 text-xs tabular disabled:opacity-60"
+                value={form.windowMinutes}
+                onChange={(e) => { clearPreview(); setForm({ ...form, windowMinutes: e.target.value }) }}
+                inputMode="numeric"
+                disabled={isSlo}
+                placeholder={isSlo ? 'latest report' : undefined}
+              />
             </Labeled>
             <Labeled label="Severity">
               <Select value={form.severity} onValueChange={(v) => { clearPreview(); setForm({ ...form, severity: v }) }}>
@@ -784,6 +870,15 @@ function NewRuleDialog() {
               </Select>
             </Labeled>
           </div>
+
+          {isSlo && (
+            <div className="flex items-start gap-2 rounded-lg border border-violet-500/30 bg-violet-500/5 px-2.5 py-2 text-[10px] leading-relaxed text-muted-foreground">
+              <Gauge className="mt-0.5 h-3 w-3 shrink-0 text-violet-500" />
+              <span>
+                Report-backed rule: evaluated against the <b className="text-foreground/80">newest SLA report</b> from the reporting plane for the chosen service - no gateway window applies. burn_rate ≥ 1 means the error budget is being consumed at or above target pace.
+              </span>
+            </div>
+          )}
 
           {/* Live dry-run against gateway telemetry before arming */}
           <div className="rounded-lg border bg-muted/20 p-2.5">
@@ -821,7 +916,9 @@ function NewRuleDialog() {
             )}
             {!preview && (
               <p className="mt-1.5 text-[10px] text-muted-foreground">
-                Evaluates the condition against live gateway telemetry without arming anything.
+                {isSlo
+                  ? 'Evaluates the condition against the newest SLA report without arming anything.'
+                  : 'Evaluates the condition against live gateway telemetry without arming anything.'}
               </p>
             )}
           </div>

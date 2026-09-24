@@ -456,6 +456,11 @@ export interface RuleEvaluation {
   wouldFire: boolean
   reason: string
   evaluatedAt: string
+  /** Present when the rule is report-backed (metric slo.*). */
+  reportId?: string
+  reportFrom?: string
+  reportTo?: string
+  sloTarget?: number
 }
 
 export interface RuleTestResult {
