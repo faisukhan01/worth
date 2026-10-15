@@ -1,7 +1,7 @@
 # Lodestar reporting - multi-stage build.
 # Stage 1 publishes with the .NET 8 SDK; stage 2 ships the minimal ASP.NET runtime.
 
-FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 COPY Lodestar.Reporting.csproj ./
