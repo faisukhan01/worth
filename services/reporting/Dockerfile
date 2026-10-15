@@ -10,7 +10,7 @@ RUN dotnet restore ./Lodestar.Reporting.csproj
 COPY . .
 RUN dotnet publish ./Lodestar.Reporting.csproj -c Release -o /app --no-restore
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
 
 # Reports live under the reporting data dir. /tmp is writable in every runtime profile
 # (including readOnlyRootFilesystem Kubernetes pods with a tmp emptyDir); mount a real volume
